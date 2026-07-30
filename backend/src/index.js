@@ -11,6 +11,7 @@ import tagRoutes from "./routes/tags.js";
 import threadRoutes from "./routes/threads.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import settingsRoutes from "./routes/settings.js";
+import domainFilterRoutes from "./routes/domain-filters.js";
 import { createProvider } from "./providers/index.js";
 import { upsertIncomingMessage, checkUnansweredAlerts } from "./services/threads.js";
 
@@ -36,6 +37,7 @@ async function buildApp() {
 
   app.use("/api/auth", authRoutes);
   app.use("/api/tags", tagRoutes);
+  app.use("/api/domain-filters", domainFilterRoutes);
   app.use("/api/threads", threadRoutes);
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api", settingsRoutes);

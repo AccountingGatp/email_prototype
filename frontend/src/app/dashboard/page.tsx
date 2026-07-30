@@ -120,17 +120,86 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <div className="rounded-xl border border-slate-200/80 bg-white/90 p-5 shadow-sm lg:col-span-2">
+          <div className="mb-1 flex items-end justify-between gap-3">
+            <div>
+              <h2 className="text-lg text-slate-900">By client</h2>
+              <p className="text-sm text-slate-500">
+                Share of inbox volume for each saved client domain
+              </p>
+            </div>
+            <Link href="/domains" className="text-sm text-teal-700 hover:underline">
+              Manage clients
+            </Link>
+          </div>
+          {(data.byClient?.length ?? 0) === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">
+              No client domains yet.{" "}
+              <Link href="/domains" className="text-teal-700 hover:underline">
+                Add clients
+              </Link>{" "}
+              to see percentages here.
+            </p>
+          ) : (
+            <div className="mt-4 space-y-4">
+              {data.byClient.map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/inbox?domain=${encodeURIComponent(c.domain)}`}
+                  className="block rounded-lg border border-slate-100 p-3 transition hover:border-teal-200 hover:bg-teal-50/40"
+                >
+                  <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="inline-flex rounded-md border px-2 py-0.5 text-xs font-medium"
+                        style={{
+                          backgroundColor: `${c.color}18`,
+                          borderColor: `${c.color}55`,
+                          color: c.color,
+                        }}
+                      >
+                        {c.name}
+                      </span>
+                      <span className="text-slate-500">@{c.domain}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-slate-700">
+                      <span className="font-semibold tabular-nums">{c.percent}%</span>
+                      <span className="text-xs text-slate-500">
+                        {c.count} threads · {c.repliedPercent}% replied
+                      </span>
+                    </div>
+                  </div>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${Math.min(100, c.percent)}%`,
+                        backgroundColor: c.color,
+                      }}
+                    />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="rounded-xl border border-slate-200/80 bg-white/90 p-5 shadow-sm">
           <h2 className="text-lg text-slate-900">By suffix / tag</h2>
-          <p className="mb-4 text-sm text-slate-500">Volume per client or project tag</p>
+          <p className="mb-4 text-sm text-slate-500">Volume per project tag</p>
           <div className="space-y-3">
             {data.byTag.map((t) => {
               const max = Math.max(...data.byTag.map((x) => x.count), 1);
+              const pct =
+                t.percent ??
+                Math.round(((t.count / Math.max(data.total, 1)) * 1000) / 10);
               return (
                 <div key={t.id}>
                   <div className="mb-1 flex items-center justify-between text-sm">
                     <TagChip name={t.name} color={t.color} />
-                    <span className="text-slate-600">{t.count}</span>
+                    <span className="tabular-nums text-slate-600">
+                      {t.count} · {pct}%
+                    </span>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                     <div
@@ -144,6 +213,9 @@ export default function DashboardPage() {
                 </div>
               );
             })}
+            {!data.byTag.length && (
+              <p className="text-sm text-slate-500">No tags yet.</p>
+            )}
           </div>
         </div>
 
@@ -151,15 +223,20 @@ export default function DashboardPage() {
           <h2 className="text-lg text-slate-900">Status mix</h2>
           <p className="mb-4 text-sm text-slate-500">Current thread distribution</p>
           <div className="space-y-3">
-            {Object.entries(data.byStatus).map(([status, count]) => (
-              <div
-                key={status}
-                className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2"
-              >
-                <StatusBadge status={status as ThreadStatus} />
-                <span className="text-sm font-medium text-slate-800">{count}</span>
-              </div>
-            ))}
+            {Object.entries(data.byStatus).map(([status, count]) => {
+              const pct = Math.round((count / Math.max(data.total, 1)) * 100);
+              return (
+                <div
+                  key={status}
+                  className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2"
+                >
+                  <StatusBadge status={status as ThreadStatus} />
+                  <span className="text-sm font-medium tabular-nums text-slate-800">
+                    {count} · {pct}%
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

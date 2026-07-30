@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { RefreshCw, Search, Send } from "lucide-react";
 import { toast } from "sonner";
@@ -30,9 +31,21 @@ type Filters = {
   tag: string;
   repliedBy: string;
   sender: string;
-  domain: string;
+  domains: string[];
   unansweredOnly: boolean;
 };
+
+function parseDomainsParam(raw: string | null) {
+  if (!raw) return [];
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((d) => d.trim().replace(/^@/, "").toLowerCase())
+        .filter(Boolean)
+    ),
+  ];
+}
 
 export default function InboxPage() {
   const searchParams = useSearchParams();
@@ -41,6 +54,9 @@ export default function InboxPage() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [domains, setDomains] = useState<{ domain: string; count: number }[]>([]);
+  const [savedFilters, setSavedFilters] = useState<
+    { id: string; name: string; domain: string; color: string; threadCount?: number }[]
+  >([]);
   const [selectedId, setSelectedId] = useState<string | null>(
     searchParams.get("thread")
   );
@@ -56,7 +72,7 @@ export default function InboxPage() {
     tag: searchParams.get("tag") || "",
     repliedBy: "",
     sender: searchParams.get("sender") || "",
-    domain: searchParams.get("domain") || "",
+    domains: parseDomainsParam(searchParams.get("domain")),
     unansweredOnly: searchParams.get("unansweredOnly") === "true",
   });
 
@@ -67,11 +83,22 @@ export default function InboxPage() {
     if (filters.tag) p.set("tag", filters.tag);
     if (filters.repliedBy) p.set("repliedBy", filters.repliedBy);
     if (filters.sender) p.set("sender", filters.sender);
-    if (filters.domain) p.set("domain", filters.domain);
+    if (filters.domains.length) p.set("domain", filters.domains.join(","));
     if (filters.unansweredOnly) p.set("unansweredOnly", "true");
     p.set("sort", "oldest_unanswered");
     return p.toString();
   }, [filters]);
+
+  function toggleDomain(domain: string) {
+    const d = domain.replace(/^@/, "").toLowerCase();
+    setFilters((prev) => {
+      const has = prev.domains.includes(d);
+      return {
+        ...prev,
+        domains: has ? prev.domains.filter((x) => x !== d) : [...prev.domains, d],
+      };
+    });
+  }
 
   const loadThreads = useCallback(() => {
     api<{ threads: Thread[] }>(`/api/threads?${queryString}`)
@@ -84,10 +111,20 @@ export default function InboxPage() {
       api<{ tags: Tag[] }>("/api/tags"),
       api<{ users: User[] }>("/api/auth/users"),
       api<{ domains: { domain: string; count: number }[] }>("/api/threads/meta/domains"),
-    ]).then(([t, u, d]) => {
+      api<{
+        filters: {
+          id: string;
+          name: string;
+          domain: string;
+          color: string;
+          threadCount?: number;
+        }[];
+      }>("/api/domain-filters"),
+    ]).then(([t, u, d, f]) => {
       setTags(t.tags);
       setUsers(u.users);
       setDomains(d.domains);
+      setSavedFilters(f.filters);
     });
   }, []);
 
@@ -204,11 +241,89 @@ export default function InboxPage() {
             Threads, reply tracking, and suffix filters
           </p>
         </div>
-        <Button variant="outline" onClick={syncNow}>
-          <RefreshCw className="h-4 w-4" />
-          Sync now
-        </Button>
+        <div className="flex gap-2">
+          <Link
+            href="/domains"
+            className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-sm hover:bg-slate-50"
+          >
+            Manage client domains
+          </Link>
+          <Button variant="outline" onClick={syncNow}>
+            <RefreshCw className="h-4 w-4" />
+            Sync now
+          </Button>
+        </div>
       </div>
+
+      {savedFilters.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            Clients
+          </span>
+          <span className="text-xs text-slate-400">Select one or more</span>
+          {savedFilters.map((f) => {
+            const active = filters.domains.includes(f.domain);
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => toggleDomain(f.domain)}
+                className={cn(
+                  "rounded-md border px-2 py-1 text-xs font-medium transition",
+                  active ? "shadow-sm" : "bg-white hover:bg-slate-50"
+                )}
+                style={{
+                  backgroundColor: active ? `${f.color}22` : undefined,
+                  borderColor: active ? `${f.color}88` : undefined,
+                  color: active ? f.color : undefined,
+                }}
+              >
+                {active ? "✓ " : ""}
+                {f.name}
+                <span className="ml-1 opacity-70">@{f.domain}</span>
+              </button>
+            );
+          })}
+          {filters.domains.length > 0 && (
+            <button
+              type="button"
+              className="text-xs text-slate-500 underline hover:text-slate-800"
+              onClick={() => setFilters((prev) => ({ ...prev, domains: [] }))}
+            >
+              Clear clients ({filters.domains.length})
+            </button>
+          )}
+          {domains.filter((d) => !savedFilters.some((f) => f.domain === d.domain)).length >
+            0 && (
+            <>
+              <span className="ml-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                Other
+              </span>
+              {domains
+                .filter((d) => !savedFilters.some((f) => f.domain === d.domain))
+                .slice(0, 12)
+                .map((d) => {
+                  const active = filters.domains.includes(d.domain);
+                  return (
+                    <button
+                      key={d.domain}
+                      type="button"
+                      onClick={() => toggleDomain(d.domain)}
+                      className={cn(
+                        "rounded-md border px-2 py-1 text-xs transition",
+                        active
+                          ? "border-teal-300 bg-teal-50 text-teal-800"
+                          : "bg-white text-slate-600 hover:bg-slate-50"
+                      )}
+                    >
+                      {active ? "✓ " : ""}@{d.domain}
+                    </button>
+                  );
+                })}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="mb-4 grid gap-2 rounded-xl border border-slate-200/80 bg-white/90 p-3 shadow-sm md:grid-cols-6">
         <div className="relative md:col-span-2">
@@ -256,45 +371,24 @@ export default function InboxPage() {
             </option>
           ))}
         </select>
-        <select
-          className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm"
-          value={
-            filters.domain && domains.some((d) => d.domain === filters.domain)
-              ? filters.domain
-              : filters.domain
-                ? "__custom__"
-                : ""
-          }
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "__custom__") return;
-            setFilters((f) => ({ ...f, domain: v }));
-          }}
-        >
-          <option value="">All sender domains</option>
-          {domains.map((d) => (
-            <option key={d.domain} value={d.domain}>
-              @{d.domain} ({d.count})
-            </option>
-          ))}
-          {filters.domain && !domains.some((d) => d.domain === filters.domain) && (
-            <option value="__custom__">@{filters.domain}</option>
-          )}
-        </select>
         <Input
           placeholder="Sender name / email"
           value={filters.sender}
           onChange={(e) => setFilters((f) => ({ ...f, sender: e.target.value }))}
         />
         <Input
-          placeholder="Domain filter e.g. acme.com"
-          value={filters.domain}
-          onChange={(e) =>
-            setFilters((f) => ({
-              ...f,
-              domain: e.target.value.trim().replace(/^@/, "").toLowerCase(),
-            }))
-          }
+          placeholder="Add domain e.g. acme.com (Enter)"
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            const value = (e.target as HTMLInputElement).value
+              .trim()
+              .replace(/^@/, "")
+              .toLowerCase();
+            if (!value) return;
+            toggleDomain(value);
+            (e.target as HTMLInputElement).value = "";
+          }}
         />
         <label className="flex items-center gap-2 text-sm text-slate-600 md:col-span-2">
           <Checkbox
@@ -305,7 +399,7 @@ export default function InboxPage() {
           />
           Overdue unanswered only
         </label>
-        {(filters.domain ||
+        {(filters.domains.length > 0 ||
           filters.sender ||
           filters.status ||
           filters.tag ||
@@ -322,13 +416,28 @@ export default function InboxPage() {
                 tag: "",
                 repliedBy: "",
                 sender: "",
-                domain: "",
+                domains: [],
                 unansweredOnly: false,
               })
             }
           >
             Clear filters
           </Button>
+        )}
+        {filters.domains.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 md:col-span-6">
+            <span className="text-xs text-slate-500">Active domains:</span>
+            {filters.domains.map((d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => toggleDomain(d)}
+                className="rounded border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[11px] text-teal-800"
+              >
+                @{d} ×
+              </button>
+            ))}
+          </div>
         )}
         {selectedIds.size > 0 && (
           <div className="flex flex-wrap items-center gap-2 md:col-span-4">
@@ -390,15 +499,20 @@ export default function InboxPage() {
                           <span
                             role="button"
                             tabIndex={0}
-                            className="cursor-pointer rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-600 hover:border-teal-300 hover:text-teal-800"
+                            className={cn(
+                              "cursor-pointer rounded border px-1.5 py-0.5 text-[11px]",
+                              filters.domains.includes(domain)
+                                ? "border-teal-300 bg-teal-50 text-teal-800"
+                                : "border-slate-200 bg-slate-50 text-slate-600 hover:border-teal-300 hover:text-teal-800"
+                            )}
                             onClick={(e) => {
                               e.stopPropagation();
-                              setFilters((f) => ({ ...f, domain }));
+                              toggleDomain(domain);
                             }}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") {
                                 e.stopPropagation();
-                                setFilters((f) => ({ ...f, domain }));
+                                toggleDomain(domain);
                               }
                             }}
                           >

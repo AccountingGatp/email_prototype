@@ -21,6 +21,13 @@ function normalizeDomain(raw) {
     .split("/")[0];
 }
 
+function parseDomainList(raw) {
+  const parts = Array.isArray(raw)
+    ? raw.flatMap((v) => String(v).split(","))
+    : String(raw || "").split(/[,|\s]+/);
+  return [...new Set(parts.map(normalizeDomain).filter(Boolean))];
+}
+
 /** Collect unique client domains from incoming messages + participants. */
 router.get("/meta/domains", async (_req, res) => {
   try {
@@ -120,16 +127,23 @@ router.get("/", async (req, res) => {
     }
 
     if (domain) {
-      const d = normalizeDomain(domain);
-      if (d) {
-        const domainRe = new RegExp(`@${escapeRegex(d)}$`, "i");
+      const domainList = parseDomainList(domain);
+      if (domainList.length) {
+        const fromClauses = domainList.map((d) => ({
+          fromEmail: new RegExp(`@${escapeRegex(d)}$`, "i"),
+        }));
         const msgThreadIds = await Message.find({
           isIncoming: true,
-          fromEmail: domainRe,
+          $or: fromClauses,
         }).distinct("threadId");
+
+        const participantRe = new RegExp(
+          `@(?:${domainList.map(escapeRegex).join("|")})$`,
+          "i"
+        );
         andClauses.push({
           $or: [
-            { participants: { $elemMatch: { $regex: domainRe } } },
+            { participants: { $elemMatch: { $regex: participantRe } } },
             { _id: { $in: msgThreadIds } },
           ],
         });

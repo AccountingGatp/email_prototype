@@ -92,6 +92,19 @@ const notificationSchema = new mongoose.Schema(
   { timestamps: { createdAt: true, updatedAt: false }, versionKey: false }
 );
 
+/** Saved client domain filters — e.g. acmecorp.com */
+const domainFilterSchema = new mongoose.Schema(
+  {
+    _id: { type: String, default: id },
+    name: { type: String, required: true, trim: true },
+    domain: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    color: { type: String, default: "#0f766e" },
+    notes: { type: String, default: "" },
+    createdBy: { type: String, ref: "User", default: null },
+  },
+  { timestamps: { createdAt: true, updatedAt: true }, versionKey: false }
+);
+
 export const User = mongoose.models.User || mongoose.model("User", userSchema);
 export const Tag = mongoose.models.Tag || mongoose.model("Tag", tagSchema);
 export const Thread = mongoose.models.Thread || mongoose.model("Thread", threadSchema);
@@ -100,6 +113,8 @@ export const Setting =
   mongoose.models.Setting || mongoose.model("Setting", settingSchema);
 export const Notification =
   mongoose.models.Notification || mongoose.model("Notification", notificationSchema);
+export const DomainFilter =
+  mongoose.models.DomainFilter || mongoose.model("DomainFilter", domainFilterSchema);
 
 export async function getSetting(key, fallback = null) {
   const row = await Setting.findById(key).lean();

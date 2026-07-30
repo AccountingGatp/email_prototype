@@ -12,6 +12,7 @@ import {
   LogOut,
   Mail,
   Bell,
+  Globe2,
 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ import { Separator } from "@/components/ui/separator";
 const NAV = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/inbox", label: "Inbox", icon: Inbox },
+  { href: "/domains", label: "Client domains", icon: Globe2 },
   { href: "/team", label: "Team", icon: Users },
   { href: "/tags", label: "Tags", icon: Tags },
   { href: "/settings", label: "Settings", icon: Settings },

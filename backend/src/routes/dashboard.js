@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Thread, Message, Tag, User, getSetting } from "../db/models.js";
+import { Thread, Message, Tag, User, DomainFilter, getSetting } from "../db/models.js";
 import { authRequired } from "../middleware/auth.js";
 import { enrichThreads } from "../services/threads.js";
 
@@ -19,6 +19,63 @@ function startOfWeek() {
   d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function clientStats(totalThreads) {
+  const clients = await DomainFilter.find().sort({ name: 1 }).lean();
+  if (!clients.length) return [];
+
+  const denom = Math.max(totalThreads, 1);
+
+  const rows = await Promise.all(
+    clients.map(async (c) => {
+      const domainRe = new RegExp(`@${escapeRegex(c.domain)}$`, "i");
+      const threadIds = await Message.distinct("threadId", {
+        isIncoming: true,
+        fromEmail: domainRe,
+      });
+
+      // Also match participants if no incoming fromEmail hit yet
+      const participantIds = await Thread.distinct("_id", {
+        participants: { $elemMatch: { $regex: domainRe } },
+      });
+      const idSet = [...new Set([...threadIds, ...participantIds.map(String)])];
+      const count = idSet.length;
+
+      let replied = 0;
+      let notReplied = 0;
+      if (count) {
+        const statusGroups = await Thread.aggregate([
+          { $match: { _id: { $in: idSet } } },
+          { $group: { _id: "$status", c: { $sum: 1 } } },
+        ]);
+        const byStatus = Object.fromEntries(statusGroups.map((r) => [r._id, r.c]));
+        notReplied = byStatus.not_replied || 0;
+        replied =
+          (byStatus.replied || 0) +
+          (byStatus.replied_by_other || 0) +
+          (byStatus.needs_followup || 0);
+      }
+
+      return {
+        id: c._id,
+        name: c.name,
+        domain: c.domain,
+        color: c.color,
+        count,
+        percent: Math.round((count / denom) * 1000) / 10,
+        replied,
+        notReplied,
+        repliedPercent: count ? Math.round((replied / count) * 100) : 0,
+      };
+    })
+  );
+
+  return rows.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
 router.get("/overview", async (_req, res) => {
@@ -46,7 +103,8 @@ router.get("/overview", async (_req, res) => {
       ]);
 
     const byStatus = Object.fromEntries(statusCounts.map((r) => [r._id, r.c]));
-    const total = statusCounts.reduce((s, r) => s + r.c, 0) || 1;
+    const total = statusCounts.reduce((s, r) => s + r.c, 0);
+    const totalSafe = total || 1;
     const replied =
       (byStatus.replied || 0) +
       (byStatus.replied_by_other || 0) +
@@ -64,8 +122,11 @@ router.get("/overview", async (_req, res) => {
         name: t.name,
         color: t.color,
         count: countMap[t._id] || 0,
+        percent: Math.round(((countMap[t._id] || 0) / totalSafe) * 1000) / 10,
       }))
       .sort((a, b) => b.count - a.count);
+
+    const byClient = await clientStats(total);
 
     let oldestUnanswered = null;
     if (oldest) {
@@ -79,10 +140,11 @@ router.get("/overview", async (_req, res) => {
       total,
       replied,
       notReplied,
-      repliedPercent: Math.round((replied / total) * 100),
-      notRepliedPercent: Math.round((notReplied / total) * 100),
+      repliedPercent: Math.round((replied / totalSafe) * 100),
+      notRepliedPercent: Math.round((notReplied / totalSafe) * 100),
       avgReplyTimeSeconds: avgArr[0]?.avg ? Math.round(avgArr[0].avg) : null,
       byTag,
+      byClient,
       byStatus,
       oldestUnanswered,
       overdueCount,

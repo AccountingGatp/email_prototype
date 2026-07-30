@@ -61,7 +61,18 @@ export type Overview = {
   repliedPercent: number;
   notRepliedPercent: number;
   avgReplyTimeSeconds: number | null;
-  byTag: { id: string; name: string; color: string; count: number }[];
+  byTag: { id: string; name: string; color: string; count: number; percent?: number }[];
+  byClient: {
+    id: string;
+    name: string;
+    domain: string;
+    color: string;
+    count: number;
+    percent: number;
+    replied: number;
+    notReplied: number;
+    repliedPercent: number;
+  }[];
   byStatus: Record<string, number>;
   oldestUnanswered: Thread | null;
   overdueCount: number;
