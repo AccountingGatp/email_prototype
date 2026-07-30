@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
+import { PageLoader, Spinner } from "@/components/loader";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,9 +15,13 @@ type Settings = Record<string, string>;
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings>({});
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api<{ settings: Settings }>("/api/settings").then((r) => setSettings(r.settings));
+    setLoading(true);
+    api<{ settings: Settings }>("/api/settings")
+      .then((r) => setSettings(r.settings))
+      .finally(() => setLoading(false));
   }, []);
 
   async function onSave(e: FormEvent) {
@@ -45,6 +50,9 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      {loading ? (
+        <PageLoader label="Loading settings…" />
+      ) : (
       <form
         onSubmit={onSave}
         className="max-w-xl space-y-5 rounded-xl border border-slate-200/80 bg-white/90 p-5 shadow-sm"
@@ -115,9 +123,17 @@ export default function SettingsPage() {
         </div>
 
         <Button type="submit" className="bg-teal-700 hover:bg-teal-800" disabled={saving}>
-          {saving ? "Saving…" : "Save settings"}
+          {saving ? (
+            <span className="inline-flex items-center gap-2">
+              <Spinner size="sm" className="border-white border-t-transparent" />
+              Saving…
+            </span>
+          ) : (
+            "Save settings"
+          )}
         </Button>
       </form>
+      )}
     </AppShell>
   );
 }

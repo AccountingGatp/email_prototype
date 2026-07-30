@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { InlineLoader, OverlayLoader, Spinner } from "@/components/loader";
 import { cn } from "@/lib/utils";
 
 type Filters = {
@@ -66,6 +67,9 @@ export default function InboxPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
+  const [loadingThreads, setLoadingThreads] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [filters, setFilters] = useState<Filters>({
     q: "",
     status: "",
@@ -100,10 +104,14 @@ export default function InboxPage() {
     });
   }
 
-  const loadThreads = useCallback(() => {
+  const loadThreads = useCallback((silent = false) => {
+    if (!silent) setLoadingThreads(true);
     api<{ threads: Thread[] }>(`/api/threads?${queryString}`)
       .then((r) => setThreads(r.threads))
-      .catch((e) => toast.error(e.message));
+      .catch((e) => toast.error(e.message))
+      .finally(() => {
+        if (!silent) setLoadingThreads(false);
+      });
   }, [queryString]);
 
   const loadMeta = useCallback(() => {
@@ -129,13 +137,15 @@ export default function InboxPage() {
   }, []);
 
   const loadDetail = useCallback((id: string) => {
+    setLoadingDetail(true);
     api<{ thread: Thread; messages: Message[] }>(`/api/threads/${id}`)
       .then(setDetail)
-      .catch((e) => toast.error(e.message));
+      .catch((e) => toast.error(e.message))
+      .finally(() => setLoadingDetail(false));
   }, []);
 
   useEffect(() => {
-    loadThreads();
+    loadThreads(false);
     loadMeta();
   }, [loadThreads, loadMeta]);
 
@@ -145,18 +155,21 @@ export default function InboxPage() {
   }, [selectedId, loadDetail]);
 
   const onSync = useCallback(() => {
-    loadThreads();
+    loadThreads(true);
     if (selectedId) loadDetail(selectedId);
   }, [loadThreads, loadDetail, selectedId]);
   useRealtime(onSync);
 
   async function syncNow() {
+    setSyncing(true);
     try {
       const r = await api<{ synced: number }>("/api/sync", { method: "POST" });
       toast.success(r.synced ? `Synced ${r.synced} new message(s)` : "Inbox up to date");
       onSync();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -248,9 +261,9 @@ export default function InboxPage() {
           >
             Manage client domains
           </Link>
-          <Button variant="outline" onClick={syncNow}>
-            <RefreshCw className="h-4 w-4" />
-            Sync now
+          <Button variant="outline" onClick={syncNow} disabled={syncing}>
+            {syncing ? <Spinner size="sm" /> : <RefreshCw className="h-4 w-4" />}
+            {syncing ? "Syncing…" : "Sync now"}
           </Button>
         </div>
       </div>
@@ -452,7 +465,8 @@ export default function InboxPage() {
       </div>
 
       <div className="grid h-[calc(100vh-14rem)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white/90 shadow-sm">
+        <div className="relative overflow-hidden rounded-xl border border-slate-200/80 bg-white/90 shadow-sm">
+          {loadingThreads && <OverlayLoader label="Loading threads…" />}
           <ScrollArea className="h-full">
             <div className="divide-y divide-slate-100">
               {threads.map((t) => {
@@ -533,21 +547,23 @@ export default function InboxPage() {
                   </div>
                 );
               })}
-              {!threads.length && (
+              {!loadingThreads && !threads.length && (
                 <div className="p-8 text-center text-sm text-slate-500">
                   No threads match these filters.
                 </div>
               )}
+              {loadingThreads && !threads.length && <InlineLoader label="Fetching inbox…" />}
             </div>
           </ScrollArea>
         </div>
 
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200/80 bg-white/90 shadow-sm">
-          {!detail ? (
+        <div className="relative flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200/80 bg-white/90 shadow-sm">
+          {loadingDetail && <OverlayLoader label="Loading conversation…" />}
+          {!detail && !loadingDetail ? (
             <div className="flex flex-1 items-center justify-center text-sm text-slate-500">
               Select a thread to read the conversation
             </div>
-          ) : (
+          ) : detail ? (
             <>
               <div className="border-b border-slate-100 p-4">
                 <h2 className="text-xl text-slate-900">{detail.thread.subject}</h2>
@@ -660,18 +676,18 @@ export default function InboxPage() {
                   rows={3}
                 />
                 <div className="mt-2 flex justify-end">
-                  <Button
+                    <Button
                     className="bg-teal-700 hover:bg-teal-800"
                     disabled={sending || !reply.trim()}
                     onClick={sendReply}
                   >
-                    <Send className="h-4 w-4" />
+                    {sending ? <Spinner size="sm" className="border-white border-t-transparent" /> : <Send className="h-4 w-4" />}
                     {sending ? "Sending…" : "Send reply"}
                   </Button>
                 </div>
               </div>
             </>
-          )}
+          ) : null}
         </div>
       </div>
     </AppShell>

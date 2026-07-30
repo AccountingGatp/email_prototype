@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, Clock, MailOpen, MessageSquareReply, Percent } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge, TagChip } from "@/components/status-badge";
+import { PageLoader } from "@/components/loader";
 import { api } from "@/lib/api";
 import { formatReplyTime, relativeTime, senderFromParticipants } from "@/lib/format";
 import type { Overview, ThreadStatus } from "@/lib/types";
@@ -12,20 +13,35 @@ import { useRealtime } from "@/hooks/use-realtime";
 
 export default function DashboardPage() {
   const [data, setData] = useState<Overview | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const load = useCallback(() => {
-    api<Overview>("/api/dashboard/overview").then(setData).catch(console.error);
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    api<Overview>("/api/dashboard/overview")
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    load();
+    load(false);
   }, [load]);
-  useRealtime(load);
+
+  const silentLoad = useCallback(() => load(true), [load]);
+  useRealtime(silentLoad);
+
+  if (loading && !data) {
+    return (
+      <AppShell>
+        <PageLoader label="Loading overview…" />
+      </AppShell>
+    );
+  }
 
   if (!data) {
     return (
       <AppShell>
-        <div className="text-sm text-slate-500">Loading overview…</div>
+        <div className="text-sm text-slate-500">Could not load overview.</div>
       </AppShell>
     );
   }

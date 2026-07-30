@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { TagChip } from "@/components/status-badge";
+import { PageLoader, Spinner } from "@/components/loader";
 import { api } from "@/lib/api";
 import type { Tag } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -19,9 +20,14 @@ export default function TagsPage() {
   const [color, setColor] = useState(COLORS[0]);
   const [description, setDescription] = useState("");
   const [editing, setEditing] = useState<Tag | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
-    api<{ tags: Tag[] }>("/api/tags").then((r) => setTags(r.tags));
+    setLoading(true);
+    api<{ tags: Tag[] }>("/api/tags")
+      .then((r) => setTags(r.tags))
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -30,6 +36,7 @@ export default function TagsPage() {
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
+    setSaving(true);
     try {
       await api("/api/tags", {
         method: "POST",
@@ -41,6 +48,8 @@ export default function TagsPage() {
       load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -122,12 +131,22 @@ export default function TagsPage() {
               rows={2}
             />
           </div>
-          <Button type="submit" className="w-full bg-teal-700 hover:bg-teal-800">
-            Create tag
+          <Button type="submit" className="w-full bg-teal-700 hover:bg-teal-800" disabled={saving}>
+            {saving ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner size="sm" className="border-white border-t-transparent" />
+                Creating…
+              </span>
+            ) : (
+              "Create tag"
+            )}
           </Button>
         </form>
 
         <div className="rounded-xl border border-slate-200/80 bg-white/90 shadow-sm">
+          {loading ? (
+            <PageLoader label="Loading tags…" />
+          ) : (
           <div className="divide-y divide-slate-100">
             {tags.map((t) => (
               <div key={t.id} className="flex items-start justify-between gap-3 p-4">
@@ -151,6 +170,7 @@ export default function TagsPage() {
               </div>
             ))}
           </div>
+          )}
         </div>
       </div>
 

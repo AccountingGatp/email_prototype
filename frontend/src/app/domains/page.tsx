@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
+import { PageLoader, Spinner } from "@/components/loader";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,14 +30,18 @@ export default function DomainsPage() {
   const [color, setColor] = useState(COLORS[0]);
   const [notes, setNotes] = useState("");
   const [editing, setEditing] = useState<DomainFilter | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
+    setLoading(true);
     api<{ filters: DomainFilter[] }>("/api/domain-filters")
       .then((r) => setFilters(r.filters || []))
       .catch((e) => {
         console.error(e);
         toast.error(e.message || "Failed to load domain filters");
-      });
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -45,6 +50,7 @@ export default function DomainsPage() {
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
+    setSaving(true);
     try {
       const res = await api<{ filter: DomainFilter; existing?: boolean }>(
         "/api/domain-filters",
@@ -62,6 +68,8 @@ export default function DomainsPage() {
       load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -157,12 +165,22 @@ export default function DomainsPage() {
               placeholder="Optional"
             />
           </div>
-          <Button type="submit" className="w-full bg-teal-700 hover:bg-teal-800">
-            Save domain filter
+          <Button type="submit" className="w-full bg-teal-700 hover:bg-teal-800" disabled={saving}>
+            {saving ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner size="sm" className="border-white border-t-transparent" />
+                Saving…
+              </span>
+            ) : (
+              "Save domain filter"
+            )}
           </Button>
         </form>
 
         <div className="rounded-xl border border-slate-200/80 bg-white/90 shadow-sm">
+          {loading ? (
+            <PageLoader label="Loading client domains…" />
+          ) : (
           <div className="divide-y divide-slate-100">
             {filters.map((f) => (
               <div key={f.id} className="flex items-start justify-between gap-3 p-4">
@@ -207,6 +225,7 @@ export default function DomainsPage() {
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 

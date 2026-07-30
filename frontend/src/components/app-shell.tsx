@@ -40,8 +40,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (loading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--app-bg)]">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-teal-700 border-t-transparent" />
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[var(--app-bg)]">
+        <div className="h-10 w-10 animate-spin rounded-full border-[3px] border-teal-700 border-t-transparent" />
+        <p className="text-sm text-slate-500">Loading workspace…</p>
       </div>
     );
   }
