@@ -148,17 +148,16 @@ export default function InboxPage() {
           threadCount?: number;
         }[];
       }>("/api/domain-filters"),
-      api<{ settings: Record<string, string> }>("/api/settings").catch(() => ({
-        settings: {},
-      })),
+      api<{ settings: Record<string, string> }>("/api/settings").catch(
+        (): { settings: Record<string, string> } => ({ settings: {} })
+      ),
     ]).then(([t, u, d, f, s]) => {
       setTags(t.tags);
       setUsers(u.users);
       setDomains(d.domains);
       setSavedFilters(f.filters);
-      if (s.settings?.shared_inbox_email) {
-        setSharedInboxEmail(s.settings.shared_inbox_email);
-      }
+      const mailbox = s.settings.shared_inbox_email;
+      if (mailbox) setSharedInboxEmail(mailbox);
     });
   }, []);
 
