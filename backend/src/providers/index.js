@@ -144,7 +144,22 @@ export class GmailProvider {
     };
   }
 
+  async ensureMailboxCursor(gmail) {
+    const profile = await gmail.users.getProfile({ userId: "me" });
+    const email = (profile.data.emailAddress || "").toLowerCase();
+    const previous = ((await getSetting("gmail_synced_mailbox")) || "").toLowerCase();
+
+    if (email && previous && email !== previous) {
+      console.warn(`[gmail] mailbox changed ${previous} → ${email}; resetting sync cursor`);
+      await setSetting("gmail_history_id", "");
+      await setSetting("gmail_initial_sync_done", "false");
+    }
+    if (email) await setSetting("gmail_synced_mailbox", email);
+    return profile;
+  }
+
   async fetchMessageIds(gmail) {
+    const profile = await this.ensureMailboxCursor(gmail);
     const historyId = await getSetting("gmail_history_id");
     const initialDone = (await getSetting("gmail_initial_sync_done")) === "true";
     const ids = new Set();
@@ -180,7 +195,6 @@ export class GmailProvider {
       maxResults: limit,
     });
 
-    const profile = await gmail.users.getProfile({ userId: "me" });
     if (profile.data.historyId) {
       await setSetting("gmail_history_id", profile.data.historyId);
     }
