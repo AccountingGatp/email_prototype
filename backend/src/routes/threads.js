@@ -72,6 +72,7 @@ router.get("/", async (req, res) => {
   try {
     const {
       status,
+      awaiting,
       tag,
       repliedBy,
       q,
@@ -89,7 +90,15 @@ router.get("/", async (req, res) => {
     const filter = {};
     const andClauses = [];
 
-    if (status) filter.status = status;
+    if (status) {
+      filter.status = status;
+    } else if (awaiting === "us") {
+      // We still owe a reply (never replied, or client wrote again)
+      filter.status = { $in: ["not_replied", "needs_followup"] };
+    } else if (awaiting === "client") {
+      // We replied last — waiting on the client
+      filter.status = { $in: ["replied", "replied_by_other"] };
+    }
     if (assignedTo) filter.assignedTo = assignedTo;
     if (tag) {
       const tagDoc = await Tag.findOne({

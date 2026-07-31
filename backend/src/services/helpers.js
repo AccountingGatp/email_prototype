@@ -2,6 +2,8 @@
  * Parse plus-addressing suffix from recipient addresses.
  * e.g. support+billing@company.com → "billing"
  */
+import { normalizeBodyText } from "./email-body.js";
+
 export function extractSuffix(toEmails = [], sharedInbox = "support@company.com") {
   const localBase = sharedInbox.split("@")[0].toLowerCase();
   const domain = sharedInbox.split("@")[1]?.toLowerCase();
@@ -34,11 +36,13 @@ export function mapThread(thread, tags = [], lastReplier = null, assignee = null
       ? thread.assignedTo
       : null);
 
+  const snippet = normalizeBodyText(thread.snippet || "", "", "").slice(0, 160);
+
   return {
     id: thread._id,
     externalId: thread.externalId,
     subject: thread.subject,
-    snippet: thread.snippet,
+    snippet,
     participants: thread.participants || [],
     status: thread.status,
     assignedTo: assigned
@@ -75,6 +79,8 @@ export function mapMessage(msg, replier = null) {
     replier ||
     (msg.repliedBy && typeof msg.repliedBy === "object" ? msg.repliedBy : null);
 
+  const bodyText = normalizeBodyText(msg.bodyText || "", msg.bodyHtml || "", "");
+
   return {
     id: msg._id,
     threadId: msg.threadId,
@@ -83,7 +89,7 @@ export function mapMessage(msg, replier = null) {
     fromName: msg.fromName,
     toEmails: msg.toEmails || [],
     ccEmails: msg.ccEmails || [],
-    bodyText: msg.bodyText,
+    bodyText,
     bodyHtml: msg.bodyHtml,
     sentAt: iso(msg.sentAt),
     isIncoming: !!msg.isIncoming,

@@ -8,6 +8,7 @@ import {
   getSetting,
 } from "../db/models.js";
 import { extractSuffix } from "./helpers.js";
+import { normalizeBodyText } from "./email-body.js";
 
 async function findTeamMemberByEmail(email) {
   if (!email) return null;
@@ -77,7 +78,7 @@ export async function recomputeThreadStatus(threadId) {
   if (firstOut?.sentAt && !thread.firstReplyAt) thread.firstReplyAt = firstOut.sentAt;
   thread.replyTimeSeconds = replySeconds;
   thread.latestMessageAt = latest?.sentAt || thread.latestMessageAt;
-  thread.snippet = latest?.bodyText?.slice(0, 120) || thread.snippet;
+  thread.snippet = normalizeBodyText(latest?.bodyText || "", latest?.bodyHtml || "", "").slice(0, 120) || thread.snippet;
   await thread.save();
   return status;
 }
@@ -105,7 +106,7 @@ export async function upsertIncomingMessage(payload) {
       _id: nanoid(),
       externalId: payload.threadExternalId || `ext_${nanoid(8)}`,
       subject: payload.subject,
-      snippet: (payload.bodyText || "").slice(0, 120),
+      snippet: normalizeBodyText(payload.bodyText || "", payload.bodyHtml || "", "").slice(0, 120),
       participants: [payload.fromEmail, sharedInbox].filter(Boolean),
       status: "not_replied",
       latestMessageAt: payload.sentAt || new Date(),

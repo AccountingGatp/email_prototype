@@ -6,6 +6,7 @@
 import { google } from "googleapis";
 import { nanoid } from "nanoid";
 import { getSetting, setSetting } from "../db/models.js";
+import { htmlToPlainText, normalizeBodyText } from "../services/email-body.js";
 
 function decodeBody(data) {
   if (!data) return "";
@@ -118,13 +119,13 @@ export class GmailProvider {
     const toEmails = parseAddressList(headers.to || "");
     const ccEmails = parseAddressList(headers.cc || "");
     const bodies = walkParts(msg.payload);
-    const bodyText =
-      bodies.text ||
-      (bodies.html
-        ? bodies.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-        : "") ||
-      msg.snippet ||
-      "";
+    const fromHtml = bodies.html ? htmlToPlainText(bodies.html) : "";
+    // Prefer real text/plain when it isn't empty CSS noise; else HTML→text; else Gmail snippet
+    const bodyText = normalizeBodyText(
+      bodies.text || "",
+      bodies.html || "",
+      msg.snippet || fromHtml || ""
+    );
 
     const internalDate = msg.internalDate
       ? new Date(Number(msg.internalDate)).toISOString()
