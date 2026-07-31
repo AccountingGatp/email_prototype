@@ -7,7 +7,7 @@ import { authRequired, signToken } from "../middleware/auth.js";
 
 const router = Router();
 
-const ALLOWED_DOMAIN = "gmail.com";
+const ALLOWED_DOMAIN = "gatpsolutions.com";
 
 function googleClientId() {
   return process.env.GOOGLE_CLIENT_ID || process.env.GMAIL_CLIENT_ID || "";
