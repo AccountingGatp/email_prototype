@@ -1,23 +1,25 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { GoogleLogin } from "@react-oauth/google";
 import { Mail } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { getGoogleClientId } from "@/components/google-auth-provider";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/loader";
+// import { FormEvent } from "react";
+// import { Button } from "@/components/ui/button";
+// import { Input } from "@/components/ui/input";
+// import { Label } from "@/components/ui/label";
 
 export default function LoginPage() {
-  const { login, loginWithGoogle, user, loading } = useAuth();
+  const { loginWithGoogle, user, loading } = useAuth();
+  // const { login, loginWithGoogle, user, loading } = useAuth();
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  // const [email, setEmail] = useState("");
+  // const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
+  // const [pending, setPending] = useState(false);
   const [googlePending, setGooglePending] = useState(false);
   const googleClientId = getGoogleClientId();
 
@@ -25,19 +27,19 @@ export default function LoginPage() {
     if (!loading && user) router.replace("/dashboard");
   }, [loading, user, router]);
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    setPending(true);
-    setError("");
-    try {
-      await login(email, password);
-      router.push("/dashboard");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setPending(false);
-    }
-  }
+  // async function onSubmit(e: FormEvent) {
+  //   e.preventDefault();
+  //   setPending(true);
+  //   setError("");
+  //   try {
+  //     await login(email, password);
+  //     router.push("/dashboard");
+  //   } catch (err) {
+  //     setError(err instanceof Error ? err.message : "Login failed");
+  //   } finally {
+  //     setPending(false);
+  //   }
+  // }
 
   async function onGoogleSuccess(credential?: string) {
     if (!credential) {
@@ -73,7 +75,7 @@ export default function LoginPage() {
         </div>
 
         {googleClientId ? (
-          <div className="mb-6 space-y-3">
+          <div className="space-y-3">
             <div className="flex min-h-[44px] items-center justify-center">
               {googlePending ? (
                 <div className="flex items-center gap-2 text-sm text-slate-600">
@@ -97,14 +99,14 @@ export default function LoginPage() {
               Only <code className="rounded bg-slate-100 px-1">@gatpsolutions.com</code> emails
               are allowed
             </p>
-            <div className="relative my-2">
+            {/* <div className="relative my-2">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-slate-200" />
               </div>
               <div className="relative flex justify-center text-xs uppercase">
                 <span className="bg-white px-2 text-slate-400">or email</span>
               </div>
-            </div>
+            </div> */}
           </div>
         ) : (
           <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -112,7 +114,9 @@ export default function LoginPage() {
           </p>
         )}
 
-        <form onSubmit={onSubmit} className="space-y-4">
+        {error && <p className="mt-4 text-sm text-rose-600">{error}</p>}
+
+        {/* <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email">Work email</Label>
             <Input
@@ -138,7 +142,7 @@ export default function LoginPage() {
           <Button type="submit" className="w-full bg-teal-700 hover:bg-teal-800" disabled={pending}>
             {pending ? "Signing in…" : "Sign in"}
           </Button>
-        </form>
+        </form> */}
       </div>
     </div>
   );
