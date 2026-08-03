@@ -34,11 +34,16 @@ const threadSchema = new mongoose.Schema(
     participants: { type: [String], default: [] },
     status: {
       type: String,
-      enum: ["replied", "not_replied", "replied_by_other", "needs_followup"],
-      default: "not_replied",
+      enum: ["to_respond", "waiting", "done"],
+      default: "to_respond",
     },
     assignedTo: { type: String, ref: "User", default: null },
     tagIds: { type: [String], default: [], ref: "Tag" },
+    category: { type: String, default: null },
+    isNoise: { type: Boolean, default: false },
+    closedAt: { type: Date, default: null },
+    gmailLabelIds: { type: [String], default: [] },
+    gmailLabelNames: { type: [String], default: [] },
     latestMessageAt: { type: Date, default: null },
     firstIncomingAt: { type: Date, default: null },
     firstReplyAt: { type: Date, default: null },
@@ -52,6 +57,10 @@ threadSchema.index({ status: 1 });
 threadSchema.index({ latestMessageAt: -1 });
 threadSchema.index({ firstIncomingAt: 1 });
 threadSchema.index({ tagIds: 1 });
+threadSchema.index({ isNoise: 1 });
+threadSchema.index({ category: 1 });
+threadSchema.index({ closedAt: 1 });
+threadSchema.index({ assignedTo: 1 });
 
 const messageSchema = new mongoose.Schema(
   {

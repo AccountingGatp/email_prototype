@@ -46,7 +46,7 @@ export default function SettingsPage() {
       <div className="mb-6">
         <h1 className="text-3xl tracking-tight text-slate-900">Settings</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Unanswered thresholds, inbox address, and provider
+          SLA, inbox address, provider, and Gmail label write-back notes
         </p>
       </div>
 
@@ -67,31 +67,34 @@ export default function SettingsPage() {
             }
           />
           <p className="text-xs text-slate-500">
-            Used to detect plus-address suffixes like support+clientX@…
+            Used for plus-address tags and Gmail Open mail links
           </p>
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="threshold">Unanswered alert threshold (hours)</Label>
+          <Label htmlFor="overdue">Overdue SLA (business days)</Label>
           <Input
-            id="threshold"
+            id="overdue"
             type="number"
             min={1}
-            value={settings.unanswered_threshold_hours || "4"}
+            value={settings.overdue_business_days || "2"}
             onChange={(e) =>
               setSettings((s) => ({
                 ...s,
-                unanswered_threshold_hours: e.target.value,
+                overdue_business_days: e.target.value,
               }))
             }
           />
+          <p className="text-xs text-slate-500">
+            SOP default is 2 business days for To Respond escalation (Sat/Sun skipped)
+          </p>
         </div>
 
         <div className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
           <div>
-            <div className="text-sm font-medium">Notify on unanswered</div>
+            <div className="text-sm font-medium">Notify on overdue</div>
             <div className="text-xs text-slate-500">
-              Create in-app alerts when threshold is exceeded
+              In-app alerts when To Respond exceeds the SLA
             </div>
           </div>
           <Switch
@@ -118,8 +121,16 @@ export default function SettingsPage() {
             <option value="graph">Microsoft Graph</option>
           </select>
           <p className="text-xs text-slate-500">
-            For Gmail/Graph, set credentials in the backend <code>.env</code> file.
+            For Gmail, set credentials in the backend <code>.env</code>. Status write-back
+            needs OAuth scope <code>https://www.googleapis.com/auth/gmail.modify</code>{" "}
+            (in addition to readonly). Labels used: <strong>To Respond</strong>,{" "}
+            <strong>Waiting On Them</strong>, <strong>Done</strong>.
           </p>
+        </div>
+
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Mailbox sync runs when someone opens the app (once per tab session), or via{" "}
+          <strong>Sync now</strong> in the inbox. There is no background polling.
         </div>
 
         <Button type="submit" className="bg-teal-700 hover:bg-teal-800" disabled={saving}>

@@ -2,14 +2,21 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Clock, MailOpen, MessageSquareReply, Percent } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  FolderOpen,
+  Hourglass,
+  MessageCircleWarning,
+  VolumeX,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge, TagChip } from "@/components/status-badge";
 import { PageLoader } from "@/components/loader";
 import { api } from "@/lib/api";
-import { formatReplyTime, relativeTime, senderFromParticipants } from "@/lib/format";
-import type { Overview, ThreadStatus } from "@/lib/types";
-import { useRealtime } from "@/hooks/use-realtime";
+import { relativeTime, senderFromParticipants } from "@/lib/format";
+import type { Overview } from "@/lib/types";
 
 export default function DashboardPage() {
   const [data, setData] = useState<Overview | null>(null);
@@ -27,8 +34,11 @@ export default function DashboardPage() {
     load(false);
   }, [load]);
 
-  const silentLoad = useCallback(() => load(true), [load]);
-  useRealtime(silentLoad);
+  useEffect(() => {
+    const handler = () => load(true);
+    window.addEventListener("et:mailbox-synced", handler);
+    return () => window.removeEventListener("et:mailbox-synced", handler);
+  }, [load]);
 
   if (loading && !data) {
     return (
@@ -46,47 +56,68 @@ export default function DashboardPage() {
     );
   }
 
-  const stats = [
+  const tiles = [
     {
-      label: "Received today",
-      value: data.totalToday,
-      sub: `${data.totalWeek} this week`,
-      icon: MailOpen,
+      label: "To Respond",
+      value: data.toRespond,
+      sub: "Needs our reply",
+      href: "/inbox?awaiting=to_respond",
+      icon: MessageCircleWarning,
+      accent: "text-rose-700",
     },
     {
-      label: "Replied",
-      value: `${data.repliedPercent}%`,
-      sub: `${data.replied} of ${data.total} threads`,
-      icon: MessageSquareReply,
+      label: "Waiting On Them",
+      value: data.waiting,
+      sub: "Awaiting client",
+      href: "/inbox?awaiting=waiting",
+      icon: Hourglass,
+      accent: "text-amber-700",
     },
     {
-      label: "Not replied",
-      value: data.notReplied,
-      sub: `${data.overdueCount} past ${data.thresholdHours}h`,
-      icon: Percent,
+      label: "Overdue",
+      value: data.overdueCount ?? data.overdue,
+      sub: `>${data.overdueBusinessDays || 2} business days`,
+      href: "/inbox?overdueOnly=true",
+      icon: AlertTriangle,
+      accent: "text-rose-800",
     },
     {
-      label: "Avg reply time",
-      value: formatReplyTime(data.avgReplyTimeSeconds),
-      sub: "first response",
-      icon: Clock,
+      label: "Closed this week",
+      value: data.closedThisWeek,
+      sub: "Marked Done",
+      href: "/inbox?awaiting=done",
+      icon: CheckCircle2,
+      accent: "text-emerald-700",
+    },
+    {
+      label: "Unfiled",
+      value: data.unfiled,
+      sub: "No client/category",
+      href: "/inbox?unfiled=true",
+      icon: FolderOpen,
+      accent: "text-slate-700",
     },
   ];
 
+  const maxTrend = Math.max(
+    1,
+    ...data.trend.flatMap((t) => [t.opened, t.closed])
+  );
+
   return (
     <AppShell>
-      <div className="mb-6 flex items-end justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl tracking-tight text-slate-900">Overview</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Shared inbox health across clients and projects
+            Accounting inbox health — open items, SLA, and noise
           </p>
         </div>
         <Link
-          href="/inbox?unansweredOnly=true"
-          className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm hover:bg-slate-50"
+          href="/inbox?overdueOnly=true"
+          className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-sm text-rose-800 hover:bg-rose-100"
         >
-          View unanswered
+          Escalation list
         </Link>
       </div>
 
@@ -98,161 +129,139 @@ export default function DashboardPage() {
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" />
           <div className="min-w-0 flex-1">
             <div className="text-xs font-semibold uppercase tracking-wide text-rose-700">
-              Oldest unanswered
+              Oldest To Respond
             </div>
-            <div className="mt-1 truncate font-medium text-slate-900">
+            <div className="truncate font-medium text-slate-900">
               {data.oldestUnanswered.subject}
             </div>
-            <div className="mt-1 text-sm text-slate-600">
-              From {senderFromParticipants(data.oldestUnanswered.participants)} · waiting{" "}
-              {relativeTime(data.oldestUnanswered.firstIncomingAt)}
+            <div className="text-xs text-slate-600">
+              {senderFromParticipants(data.oldestUnanswered.participants)} ·{" "}
+              {data.oldestUnanswered.ageBusinessDays != null
+                ? `${data.oldestUnanswered.ageBusinessDays} business day(s)`
+                : relativeTime(data.oldestUnanswered.firstIncomingAt)}
             </div>
           </div>
           <StatusBadge status={data.oldestUnanswered.status} />
         </Link>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map((s) => {
-          const Icon = s.icon;
-          return (
-            <div
-              key={s.label}
-              className="rounded-xl border border-slate-200/80 bg-white/90 p-4 shadow-sm"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  {s.label}
-                </span>
-                <Icon className="h-4 w-4 text-teal-700" />
-              </div>
-              <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                {s.value}
-              </div>
-              <div className="mt-1 text-xs text-slate-500">{s.sub}</div>
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {tiles.map((t) => (
+          <Link
+            key={t.label}
+            href={t.href}
+            className="rounded-xl border border-slate-200/80 bg-white/90 p-4 shadow-sm transition hover:border-teal-200 hover:shadow"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                {t.label}
+              </span>
+              <t.icon className={`h-4 w-4 ${t.accent}`} />
             </div>
-          );
-        })}
+            <div className={`mt-2 text-3xl tracking-tight ${t.accent}`}>{t.value}</div>
+            <div className="mt-1 text-xs text-slate-500">{t.sub}</div>
+          </Link>
+        ))}
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200/80 bg-white/90 p-5 shadow-sm lg:col-span-2">
-          <div className="mb-1 flex items-end justify-between gap-3">
-            <div>
-              <h2 className="text-lg text-slate-900">By client</h2>
-              <p className="text-sm text-slate-500">
-                Share of inbox volume for each saved client domain
-              </p>
-            </div>
-            <Link href="/domains" className="text-sm text-teal-700 hover:underline">
-              Manage clients
-            </Link>
+      <div className="mb-6 grid gap-4 lg:grid-cols-3">
+        <div className="rounded-xl border border-slate-200/80 bg-white/90 p-4 shadow-sm lg:col-span-2">
+          <h2 className="text-sm font-semibold text-slate-900">Open vs closed (7 days)</h2>
+          <div className="mt-4 flex items-end gap-2">
+            {data.trend.map((day) => (
+              <div key={day.date} className="flex flex-1 flex-col items-center gap-1">
+                <div className="flex h-24 w-full items-end justify-center gap-0.5">
+                  <div
+                    className="w-2 rounded-t bg-rose-400/80"
+                    style={{ height: `${(day.opened / maxTrend) * 100}%` }}
+                    title={`Opened ${day.opened}`}
+                  />
+                  <div
+                    className="w-2 rounded-t bg-emerald-500/80"
+                    style={{ height: `${(day.closed / maxTrend) * 100}%` }}
+                    title={`Closed ${day.closed}`}
+                  />
+                </div>
+                <span className="text-[10px] text-slate-400">
+                  {day.date.slice(5)}
+                </span>
+              </div>
+            ))}
           </div>
-          {(data.byClient?.length ?? 0) === 0 ? (
-            <p className="mt-4 text-sm text-slate-500">
-              No client domains yet.{" "}
-              <Link href="/domains" className="text-teal-700 hover:underline">
-                Add clients
-              </Link>{" "}
-              to see percentages here.
-            </p>
-          ) : (
-            <div className="mt-4 space-y-4">
-              {data.byClient.map((c) => (
-                <Link
-                  key={c.id}
-                  href={`/inbox?domain=${encodeURIComponent(c.domain)}`}
-                  className="block rounded-lg border border-slate-100 p-3 transition hover:border-teal-200 hover:bg-teal-50/40"
-                >
-                  <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="inline-flex rounded-md border px-2 py-0.5 text-xs font-medium"
-                        style={{
-                          backgroundColor: `${c.color}18`,
-                          borderColor: `${c.color}55`,
-                          color: c.color,
-                        }}
-                      >
-                        {c.name}
-                      </span>
-                      <span className="text-slate-500">@{c.domain}</span>
-                    </div>
-                    <div className="flex items-center gap-3 text-slate-700">
-                      <span className="font-semibold tabular-nums">{c.percent}%</span>
-                      <span className="text-xs text-slate-500">
-                        {c.count} threads · {c.repliedPercent}% replied
-                      </span>
-                    </div>
-                  </div>
-                  <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${Math.min(100, c.percent)}%`,
-                        backgroundColor: c.color,
-                      }}
-                    />
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
+          <div className="mt-2 flex gap-4 text-xs text-slate-500">
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-sm bg-rose-400" /> Opened
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-sm bg-emerald-500" /> Closed
+            </span>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-white/90 p-5 shadow-sm">
-          <h2 className="text-lg text-slate-900">By suffix / tag</h2>
-          <p className="mb-4 text-sm text-slate-500">Volume per project tag</p>
-          <div className="space-y-3">
-            {data.byTag.map((t) => {
-              const max = Math.max(...data.byTag.map((x) => x.count), 1);
-              const pct =
-                t.percent ??
-                Math.round(((t.count / Math.max(data.total, 1)) * 1000) / 10);
-              return (
-                <div key={t.id}>
-                  <div className="mb-1 flex items-center justify-between text-sm">
-                    <TagChip name={t.name} color={t.color} />
-                    <span className="tabular-nums text-slate-600">
-                      {t.count} · {pct}%
-                    </span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${(t.count / max) * 100}%`,
-                        backgroundColor: t.color,
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-            {!data.byTag.length && (
-              <p className="text-sm text-slate-500">No tags yet.</p>
+        <div className="rounded-xl border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <VolumeX className="h-4 w-4 text-slate-500" />
+            <h2 className="text-sm font-semibold text-slate-900">Noise check</h2>
+          </div>
+          <div className="mt-3 text-3xl text-slate-800">{data.noiseCount}</div>
+          <p className="mt-1 text-xs text-slate-500">
+            Auto-classified OTP / promo / digest threads excluded from open work
+          </p>
+          <Link
+            href="/inbox?noise=true&awaiting=all"
+            className="mt-3 inline-block text-xs text-teal-700 underline"
+          >
+            Review noise
+          </Link>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold text-slate-900">By client (open)</h2>
+          <div className="space-y-2">
+            {data.byClient.slice(0, 8).map((c) => (
+              <Link
+                key={c.id}
+                href={`/inbox?domain=${encodeURIComponent(c.domain)}`}
+                className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50"
+              >
+                <span className="flex items-center gap-2 text-sm text-slate-800">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: c.color }}
+                  />
+                  {c.name}
+                </span>
+                <span className="text-xs text-slate-500">
+                  {c.open ?? c.count} open · {c.toRespond ?? c.notReplied} to respond
+                </span>
+              </Link>
+            ))}
+            {!data.byClient.length && (
+              <p className="text-sm text-slate-500">Add client domains to see this view.</p>
             )}
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-white/90 p-5 shadow-sm">
-          <h2 className="text-lg text-slate-900">Status mix</h2>
-          <p className="mb-4 text-sm text-slate-500">Current thread distribution</p>
-          <div className="space-y-3">
-            {Object.entries(data.byStatus).map(([status, count]) => {
-              const pct = Math.round((count / Math.max(data.total, 1)) * 100);
-              return (
-                <div
-                  key={status}
-                  className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2"
-                >
-                  <StatusBadge status={status as ThreadStatus} />
-                  <span className="text-sm font-medium tabular-nums text-slate-800">
-                    {count} · {pct}%
-                  </span>
-                </div>
-              );
-            })}
+        <div className="rounded-xl border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold text-slate-900">By tag</h2>
+          <div className="flex flex-wrap gap-2">
+            {data.byTag
+              .filter((t) => t.count > 0)
+              .slice(0, 16)
+              .map((t) => (
+                <Link key={t.id} href={`/inbox?tag=${t.id}`}>
+                  <TagChip name={`${t.name} (${t.count})`} color={t.color} />
+                </Link>
+              ))}
+            {!data.byTag.some((t) => t.count > 0) && (
+              <p className="text-sm text-slate-500">No tagged open threads.</p>
+            )}
+          </div>
+          <div className="mt-4 flex items-center gap-2 text-xs text-slate-500">
+            <Clock className="h-3.5 w-3.5" />
+            SLA: escalate To Respond after {data.overdueBusinessDays || 2} business days
           </div>
         </div>
       </div>

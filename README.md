@@ -31,35 +31,30 @@ Open http://localhost:3000 and sign in:
 | sam@company.com | password123 |
 | casey@company.com | password123 |
 
-## Features
+## Features (Accounting SOP)
 
-1. **Unified inbox** — thread list + full conversation timeline  
-2. **Suffix / tags** — detects `support+billing@…` plus-addressing; create/edit/delete tags; bulk-apply  
-3. **Reply tracking** — Replied / Not replied / Replied by someone else / Needs follow-up; who, when, body  
-4. **Unanswered alerts** — configurable hour threshold + in-app notifications  
-5. **Filters & search** — tag, status, replier, sender, keyword  
-6. **Team view** — per-person replies + leaderboard (today / week); manual assignment  
-7. **Overview** — volumes, reply %, avg reply time, tag breakdown, oldest unanswered  
+1. **Status taxonomy** — To Respond / Waiting On Them / Done (hybrid: Gmail labels + portal write-back)  
+2. **Open-items inbox** — default excludes Done + noise; filters by client, category, owner, age bucket  
+3. **SLA** — escalate To Respond after N business days (default 2)  
+4. **Dashboard KPIs** — To Respond, Waiting, Overdue, Closed this week, Unfiled, noise check, 7-day trend  
+5. **Roles** — admins see all; members see assigned + unassigned  
+6. **Metadata-first** — sync stores snippet/labels/status; open full mail in Gmail  
+7. **Sync** — on app open (once per tab session) + manual **Sync now** (no background interval)
+
+Gmail status labels: `To Respond`, `Waiting On Them`, `Done`.  
+OAuth refresh token should include `gmail.modify` for label write-back (plus readonly for sync).
 
 ## Connecting a real mailbox
 
 Set provider in **Settings** (or `backend/.env`) and add credentials:
 
 ```env
-# Gmail
-# provider=gmail via Settings UI, then:
+PROVIDER=gmail
 GMAIL_CLIENT_ID=
 GMAIL_CLIENT_SECRET=
 GMAIL_REFRESH_TOKEN=
-
-# Microsoft 365
-AZURE_TENANT_ID=
-AZURE_CLIENT_ID=
-AZURE_CLIENT_SECRET=
-SHARED_MAILBOX_EMAIL=support@company.com
+SHARED_MAILBOX_EMAIL=accounting@gatpsolutions.com
 ```
-
-Provider adapters live in `backend/src/providers/index.js`. Wire `googleapis` / `@microsoft/microsoft-graph-client` into `fetchNewMessages()` and map messages into the shape expected by `upsertIncomingMessage`.
 
 Webhook endpoint (no auth in demo): `POST /api/webhooks/email`
 

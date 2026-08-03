@@ -2,6 +2,7 @@ import { Router } from "express";
 import { Thread, Message, Tag, User, DomainFilter, getSetting } from "../db/models.js";
 import { authRequired } from "../middleware/auth.js";
 import { enrichThreads } from "../services/threads.js";
+import { businessDaysAgo } from "../services/sla.js";
 
 const router = Router();
 router.use(authRequired);
@@ -25,11 +26,9 @@ function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function clientStats(totalThreads) {
+async function clientStats() {
   const clients = await DomainFilter.find().sort({ name: 1 }).lean();
   if (!clients.length) return [];
-
-  const denom = Math.max(totalThreads, 1);
 
   const rows = await Promise.all(
     clients.map(async (c) => {
@@ -38,27 +37,28 @@ async function clientStats(totalThreads) {
         isIncoming: true,
         fromEmail: domainRe,
       });
-
-      // Also match participants if no incoming fromEmail hit yet
       const participantIds = await Thread.distinct("_id", {
         participants: { $elemMatch: { $regex: domainRe } },
       });
       const idSet = [...new Set([...threadIds, ...participantIds.map(String)])];
-      const count = idSet.length;
 
-      let replied = 0;
-      let notReplied = 0;
-      if (count) {
+      let toRespond = 0;
+      let waiting = 0;
+      let open = 0;
+      if (idSet.length) {
         const statusGroups = await Thread.aggregate([
-          { $match: { _id: { $in: idSet } } },
+          {
+            $match: {
+              _id: { $in: idSet },
+              isNoise: { $ne: true },
+            },
+          },
           { $group: { _id: "$status", c: { $sum: 1 } } },
         ]);
         const byStatus = Object.fromEntries(statusGroups.map((r) => [r._id, r.c]));
-        notReplied = byStatus.not_replied || 0;
-        replied =
-          (byStatus.replied || 0) +
-          (byStatus.replied_by_other || 0) +
-          (byStatus.needs_followup || 0);
+        toRespond = byStatus.to_respond || 0;
+        waiting = byStatus.waiting || 0;
+        open = toRespond + waiting;
       }
 
       return {
@@ -66,52 +66,117 @@ async function clientStats(totalThreads) {
         name: c.name,
         domain: c.domain,
         color: c.color,
-        count,
-        percent: Math.round((count / denom) * 1000) / 10,
-        replied,
-        notReplied,
-        repliedPercent: count ? Math.round((replied / count) * 100) : 0,
+        count: open,
+        percent: 0,
+        replied: waiting,
+        notReplied: toRespond,
+        toRespond,
+        waiting,
+        open,
+        repliedPercent: open ? Math.round((waiting / open) * 100) : 0,
       };
     })
   );
 
-  return rows.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const totalOpen = rows.reduce((s, r) => s + r.open, 0) || 1;
+  for (const r of rows) {
+    r.percent = Math.round((r.open / totalOpen) * 1000) / 10;
+  }
+
+  return rows.sort((a, b) => b.open - a.open || a.name.localeCompare(b.name));
 }
 
 router.get("/overview", async (_req, res) => {
   try {
     const todayStart = startOfDay();
     const weekStart = startOfWeek();
-    const thresholdHours = Number((await getSetting("unanswered_threshold_hours")) || 4);
-    const cutoff = new Date(Date.now() - thresholdHours * 3600 * 1000);
+    const overdueDays = Number((await getSetting("overdue_business_days")) || 2);
+    const cutoff = businessDaysAgo(overdueDays);
 
-    const [totalToday, totalWeek, statusCounts, avgArr, tags, oldest, overdueCount] =
-      await Promise.all([
-        Thread.countDocuments({ firstIncomingAt: { $gte: todayStart } }),
-        Thread.countDocuments({ firstIncomingAt: { $gte: weekStart } }),
-        Thread.aggregate([{ $group: { _id: "$status", c: { $sum: 1 } } }]),
-        Thread.aggregate([
-          { $match: { replyTimeSeconds: { $ne: null } } },
-          { $group: { _id: null, avg: { $avg: "$replyTimeSeconds" } } },
-        ]),
-        Tag.find().lean(),
-        Thread.findOne({ status: "not_replied" }).sort({ firstIncomingAt: 1 }).lean(),
-        Thread.countDocuments({
-          status: "not_replied",
-          firstIncomingAt: { $lte: cutoff },
-        }),
-      ]);
+    const openFilter = { isNoise: { $ne: true }, status: { $in: ["to_respond", "waiting"] } };
+
+    const [
+      totalToday,
+      totalWeek,
+      statusCounts,
+      avgArr,
+      tags,
+      oldest,
+      overdueCount,
+      closedThisWeek,
+      unfiled,
+      noiseCount,
+    ] = await Promise.all([
+      Thread.countDocuments({ firstIncomingAt: { $gte: todayStart } }),
+      Thread.countDocuments({ firstIncomingAt: { $gte: weekStart } }),
+      Thread.aggregate([
+        { $match: { isNoise: { $ne: true } } },
+        { $group: { _id: "$status", c: { $sum: 1 } } },
+      ]),
+      Thread.aggregate([
+        { $match: { replyTimeSeconds: { $ne: null } } },
+        { $group: { _id: null, avg: { $avg: "$replyTimeSeconds" } } },
+      ]),
+      Tag.find().lean(),
+      Thread.findOne({
+        status: "to_respond",
+        isNoise: { $ne: true },
+      })
+        .sort({ firstIncomingAt: 1 })
+        .lean(),
+      Thread.countDocuments({
+        status: "to_respond",
+        isNoise: { $ne: true },
+        firstIncomingAt: { $lte: cutoff },
+      }),
+      Thread.countDocuments({
+        status: "done",
+        closedAt: { $gte: weekStart },
+      }),
+      Thread.countDocuments({
+        ...openFilter,
+        $and: [
+          { $or: [{ tagIds: { $size: 0 } }, { tagIds: { $exists: false } }] },
+          { $or: [{ category: null }, { category: "" }, { category: { $exists: false } }] },
+        ],
+      }),
+      Thread.countDocuments({ isNoise: true }),
+    ]);
 
     const byStatus = Object.fromEntries(statusCounts.map((r) => [r._id, r.c]));
+    const toRespond = byStatus.to_respond || 0;
+    const waiting = byStatus.waiting || 0;
+    const done = byStatus.done || 0;
     const total = statusCounts.reduce((s, r) => s + r.c, 0);
     const totalSafe = total || 1;
-    const replied =
-      (byStatus.replied || 0) +
-      (byStatus.replied_by_other || 0) +
-      (byStatus.needs_followup || 0);
-    const notReplied = byStatus.not_replied || 0;
+    const open = toRespond + waiting;
+
+    // 7-day trend: new open vs closed per day
+    const trend = [];
+    for (let i = 6; i >= 0; i--) {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - i);
+      const next = new Date(day);
+      next.setDate(next.getDate() + 1);
+      const [opened, closed] = await Promise.all([
+        Thread.countDocuments({
+          firstIncomingAt: { $gte: day, $lt: next },
+          isNoise: { $ne: true },
+        }),
+        Thread.countDocuments({
+          closedAt: { $gte: day, $lt: next },
+        }),
+      ]);
+      trend.push({
+        date: day.toISOString().slice(0, 10),
+        opened,
+        closed,
+      });
+    }
 
     const tagCounts = await Thread.aggregate([
+      { $match: openFilter },
       { $unwind: { path: "$tagIds", preserveNullAndEmptyArrays: false } },
       { $group: { _id: "$tagIds", count: { $sum: 1 } } },
     ]);
@@ -122,11 +187,11 @@ router.get("/overview", async (_req, res) => {
         name: t.name,
         color: t.color,
         count: countMap[t._id] || 0,
-        percent: Math.round(((countMap[t._id] || 0) / totalSafe) * 1000) / 10,
+        percent: Math.round(((countMap[t._id] || 0) / Math.max(open, 1)) * 1000) / 10,
       }))
       .sort((a, b) => b.count - a.count);
 
-    const byClient = await clientStats(total);
+    const byClient = await clientStats();
 
     let oldestUnanswered = null;
     if (oldest) {
@@ -138,17 +203,27 @@ router.get("/overview", async (_req, res) => {
       totalToday,
       totalWeek,
       total,
-      replied,
-      notReplied,
-      repliedPercent: Math.round((replied / totalSafe) * 100),
-      notRepliedPercent: Math.round((notReplied / totalSafe) * 100),
+      open,
+      toRespond,
+      waiting,
+      done,
+      replied: waiting,
+      notReplied: toRespond,
+      repliedPercent: open ? Math.round((waiting / open) * 100) : 0,
+      notRepliedPercent: open ? Math.round((toRespond / open) * 100) : 0,
       avgReplyTimeSeconds: avgArr[0]?.avg ? Math.round(avgArr[0].avg) : null,
       byTag,
       byClient,
       byStatus,
       oldestUnanswered,
       overdueCount,
-      thresholdHours,
+      overdue: overdueCount,
+      closedThisWeek,
+      unfiled,
+      noiseCount,
+      trend,
+      thresholdHours: overdueDays * 24,
+      overdueBusinessDays: overdueDays,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -170,7 +245,8 @@ router.get("/team", async (req, res) => {
         }),
         Thread.countDocuments({
           assignedTo: u._id,
-          status: { $in: ["not_replied", "needs_followup"] },
+          status: { $in: ["to_respond", "waiting"] },
+          isNoise: { $ne: true },
         }),
         Thread.aggregate([
           {

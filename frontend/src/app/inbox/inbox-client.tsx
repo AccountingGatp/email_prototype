@@ -10,24 +10,22 @@ import { StatusBadge, TagChip } from "@/components/status-badge";
 import { api } from "@/lib/api";
 import {
   formatDateTime,
-  formatReplyTime,
   relativeTime,
   senderFromParticipants,
   domainFromEmail,
 } from "@/lib/format";
 import type { Message, Tag, Thread, ThreadStatus, User } from "@/lib/types";
-import { STATUS_LABELS } from "@/lib/types";
-import { useRealtime } from "@/hooks/use-realtime";
+import { CATEGORY_OPTIONS, STATUS_LABELS } from "@/lib/types";
+import { useAuth } from "@/components/auth-provider";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { InlineLoader, OverlayLoader, Spinner } from "@/components/loader";
-import { EmailBody } from "@/components/email-body";
 import { cn } from "@/lib/utils";
 
-type AwaitingFilter = "us" | "client" | "all";
+type AwaitingFilter = "open" | "to_respond" | "waiting" | "done" | "all";
 
 type Filters = {
   q: string;
@@ -35,15 +33,24 @@ type Filters = {
   awaiting: AwaitingFilter;
   tag: string;
   repliedBy: string;
+  assignedTo: string;
   sender: string;
   domains: string[];
+  category: string;
+  ageBucket: string;
   unansweredOnly: boolean;
+  overdueOnly: boolean;
+  unfiled: boolean;
+  showNoise: boolean;
+  scopeAll: boolean;
 };
 
 const AWAITING_OPTIONS: { value: AwaitingFilter; label: string; hint: string }[] = [
-  { value: "us", label: "We didn't reply", hint: "Needs our response" },
-  { value: "client", label: "Client didn't reply", hint: "Waiting on client" },
-  { value: "all", label: "All", hint: "Every thread" },
+  { value: "open", label: "All open", hint: "To Respond + Waiting" },
+  { value: "to_respond", label: "To Respond", hint: "Needs our reply" },
+  { value: "waiting", label: "Waiting", hint: "Waiting on client" },
+  { value: "done", label: "Done", hint: "Closed / archived" },
+  { value: "all", label: "Everything", hint: "Including Done" },
 ];
 
 function parseDomainsParam(raw: string | null) {
@@ -58,9 +65,27 @@ function parseDomainsParam(raw: string | null) {
   ];
 }
 
+function parseAwaiting(raw: string | null): AwaitingFilter {
+  if (
+    raw === "open" ||
+    raw === "to_respond" ||
+    raw === "waiting" ||
+    raw === "done" ||
+    raw === "all" ||
+    raw === "us" ||
+    raw === "client"
+  ) {
+    if (raw === "us") return "to_respond";
+    if (raw === "client") return "waiting";
+    return raw as AwaitingFilter;
+  }
+  return "open";
+}
+
 export default function InboxPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { user } = useAuth();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -81,37 +106,47 @@ export default function InboxPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [sharedInboxEmail, setSharedInboxEmail] = useState("");
-  const [filters, setFilters] = useState<Filters>(() => {
-    const awaitingParam = searchParams.get("awaiting");
-    const awaiting: AwaitingFilter =
-      awaitingParam === "client" || awaitingParam === "all" || awaitingParam === "us"
-        ? awaitingParam
-        : "us";
-    return {
-      q: "",
-      status: "",
-      awaiting,
-      tag: searchParams.get("tag") || "",
-      repliedBy: "",
-      sender: searchParams.get("sender") || "",
-      domains: parseDomainsParam(searchParams.get("domain")),
-      unansweredOnly: searchParams.get("unansweredOnly") === "true",
-    };
-  });
+  const [filters, setFilters] = useState<Filters>(() => ({
+    q: "",
+    status: "",
+    awaiting: parseAwaiting(searchParams.get("awaiting")),
+    tag: searchParams.get("tag") || "",
+    repliedBy: "",
+    assignedTo: "",
+    sender: searchParams.get("sender") || "",
+    domains: parseDomainsParam(searchParams.get("domain")),
+    category: searchParams.get("category") || "",
+    ageBucket: searchParams.get("ageBucket") || "",
+    unansweredOnly: searchParams.get("unansweredOnly") === "true",
+    overdueOnly: searchParams.get("overdueOnly") === "true",
+    unfiled: searchParams.get("unfiled") === "true",
+    showNoise: searchParams.get("noise") === "true",
+    scopeAll: searchParams.get("scope") === "all",
+  }));
 
   const queryString = useMemo(() => {
     const p = new URLSearchParams();
     if (filters.q) p.set("q", filters.q);
     if (filters.status) p.set("status", filters.status);
-    else if (filters.awaiting !== "all") p.set("awaiting", filters.awaiting);
+    else if (filters.awaiting !== "open") {
+      p.set("awaiting", filters.awaiting);
+    }
     if (filters.tag) p.set("tag", filters.tag);
     if (filters.repliedBy) p.set("repliedBy", filters.repliedBy);
+    if (filters.assignedTo) p.set("assignedTo", filters.assignedTo);
     if (filters.sender) p.set("sender", filters.sender);
     if (filters.domains.length) p.set("domain", filters.domains.join(","));
-    if (filters.unansweredOnly) p.set("unansweredOnly", "true");
+    if (filters.category) p.set("category", filters.category);
+    if (filters.ageBucket) p.set("ageBucket", filters.ageBucket);
+    if (filters.unansweredOnly || filters.overdueOnly) p.set("overdueOnly", "true");
+    if (filters.unfiled) p.set("unfiled", "true");
+    if (filters.showNoise) {
+      p.set("noise", searchParams.get("noise") === "true" ? "true" : "include");
+    }
+    if (filters.scopeAll || user?.role === "admin") p.set("scope", "all");
     p.set("sort", "oldest_unanswered");
     return p.toString();
-  }, [filters]);
+  }, [filters, user?.role, searchParams]);
 
   function toggleDomain(domain: string) {
     const d = domain.replace(/^@/, "").toLowerCase();
@@ -207,9 +242,15 @@ export default function InboxPage() {
 
   const onSync = useCallback(() => {
     loadThreads(true);
+    loadMeta();
     if (selectedId) loadDetail(selectedId);
-  }, [loadThreads, loadDetail, selectedId]);
-  useRealtime(onSync);
+  }, [loadThreads, loadMeta, loadDetail, selectedId]);
+
+  useEffect(() => {
+    const handler = () => onSync();
+    window.addEventListener("et:mailbox-synced", handler);
+    return () => window.removeEventListener("et:mailbox-synced", handler);
+  }, [onSync]);
 
   async function syncNow() {
     setSyncing(true);
@@ -302,7 +343,7 @@ export default function InboxPage() {
         <div>
           <h1 className="text-3xl tracking-tight text-slate-900">Inbox</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Threads, reply tracking, and suffix filters
+            To Respond / Waiting / Done — SOP open-items view
           </p>
         </div>
         <div className="flex gap-2">
@@ -391,9 +432,9 @@ export default function InboxPage() {
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
-          Reply needed
+          Status
         </span>
-        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
+        <div className="inline-flex flex-wrap rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
           {AWAITING_OPTIONS.map((opt) => {
             const active = filters.awaiting === opt.value;
             return (
@@ -405,13 +446,13 @@ export default function InboxPage() {
                   setFilters((f) => ({
                     ...f,
                     awaiting: opt.value,
-                    // clear fine-grained status so awaiting takes effect
                     status: "",
-                    unansweredOnly: opt.value === "us" ? f.unansweredOnly : false,
+                    overdueOnly: false,
+                    unansweredOnly: false,
                   }))
                 }
                 className={cn(
-                  "rounded-md px-3 py-1.5 text-sm transition",
+                  "rounded-md px-2.5 py-1.5 text-sm transition",
                   active
                     ? "bg-teal-700 text-white shadow-sm"
                     : "text-slate-600 hover:bg-slate-50"
@@ -469,10 +510,32 @@ export default function InboxPage() {
         </select>
         <select
           className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm"
-          value={filters.repliedBy}
-          onChange={(e) => setFilters((f) => ({ ...f, repliedBy: e.target.value }))}
+          value={filters.category}
+          onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}
         >
-          <option value="">Any replier</option>
+          <option value="">All categories</option>
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select
+          className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm"
+          value={filters.ageBucket}
+          onChange={(e) => setFilters((f) => ({ ...f, ageBucket: e.target.value }))}
+        >
+          <option value="">Any age</option>
+          <option value="0-1">0–1 business days</option>
+          <option value="2-3">2–3 business days</option>
+          <option value="4+">4+ / overdue bucket</option>
+        </select>
+        <select
+          className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm"
+          value={filters.assignedTo}
+          onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))}
+        >
+          <option value="">Any owner</option>
           {users.map((u) => (
             <option key={u.id} value={u.id}>
               {u.name}
@@ -498,14 +561,33 @@ export default function InboxPage() {
             (e.target as HTMLInputElement).value = "";
           }}
         />
-        <label className="flex items-center gap-2 text-sm text-slate-600 md:col-span-2">
+        <label className="flex items-center gap-2 text-sm text-slate-600">
           <Checkbox
-            checked={filters.unansweredOnly}
+            checked={filters.overdueOnly || filters.unansweredOnly}
             onCheckedChange={(v) =>
-              setFilters((f) => ({ ...f, unansweredOnly: v === true }))
+              setFilters((f) => ({
+                ...f,
+                overdueOnly: v === true,
+                unansweredOnly: v === true,
+                awaiting: v === true ? "to_respond" : f.awaiting,
+              }))
             }
           />
-          Overdue unanswered only
+          Overdue only
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <Checkbox
+            checked={filters.unfiled}
+            onCheckedChange={(v) => setFilters((f) => ({ ...f, unfiled: v === true }))}
+          />
+          Unfiled only
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <Checkbox
+            checked={filters.showNoise}
+            onCheckedChange={(v) => setFilters((f) => ({ ...f, showNoise: v === true }))}
+          />
+          Show noise
         </label>
         {(filters.domains.length > 0 ||
           filters.sender ||
@@ -513,8 +595,14 @@ export default function InboxPage() {
           filters.tag ||
           filters.q ||
           filters.repliedBy ||
+          filters.assignedTo ||
+          filters.category ||
+          filters.ageBucket ||
           filters.unansweredOnly ||
-          filters.awaiting !== "us") && (
+          filters.overdueOnly ||
+          filters.unfiled ||
+          filters.showNoise ||
+          filters.awaiting !== "open") && (
           <Button
             size="sm"
             variant="outline"
@@ -522,12 +610,19 @@ export default function InboxPage() {
               setFilters({
                 q: "",
                 status: "",
-                awaiting: "us",
+                awaiting: "open",
                 tag: "",
                 repliedBy: "",
+                assignedTo: "",
                 sender: "",
                 domains: [],
+                category: "",
+                ageBucket: "",
                 unansweredOnly: false,
+                overdueOnly: false,
+                unfiled: false,
+                showNoise: false,
+                scopeAll: user?.role === "admin",
               })
             }
           >
@@ -597,8 +692,17 @@ export default function InboxPage() {
                         <div className="truncate text-sm font-semibold text-slate-900">
                           {sender}
                         </div>
-                        <div className="shrink-0 text-[11px] text-slate-500">
-                          {relativeTime(t.latestMessageAt)}
+                        <div className="shrink-0 text-right text-[11px] text-slate-500">
+                          <div>{relativeTime(t.latestMessageAt)}</div>
+                          {t.ageBusinessDays != null && (
+                            <div
+                              className={cn(
+                                t.overdue ? "font-medium text-rose-600" : "text-slate-400"
+                              )}
+                            >
+                              {t.ageBusinessDays}d
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="truncate text-sm text-slate-800">{t.subject}</div>
@@ -631,14 +735,19 @@ export default function InboxPage() {
                           </span>
                         )}
                         <StatusBadge status={t.status} />
+                        {t.category && (
+                          <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600">
+                            {t.category}
+                          </span>
+                        )}
+                        {t.assignedTo && (
+                          <span className="text-[11px] text-slate-500">
+                            {t.assignedTo.name}
+                          </span>
+                        )}
                         {t.tags.map((tag) => (
                           <TagChip key={tag.id} name={tag.name} color={tag.color} />
                         ))}
-                        {t.lastReplier && (
-                          <span className="text-[11px] text-slate-500">
-                            by {t.lastReplier.name}
-                          </span>
-                        )}
                       </div>
                     </button>
                   </div>
@@ -680,7 +789,10 @@ export default function InboxPage() {
                     </Button>
                     {gmailOpenUrl(detail.thread.externalId) && (
                       <a
-                        href={gmailOpenUrl(detail.thread.externalId)!}
+                        href={
+                          detail.thread.gmailUrl ||
+                          gmailOpenUrl(detail.thread.externalId)!
+                        }
                         target="_blank"
                         rel="noopener noreferrer"
                         title="Open in Gmail"
@@ -694,6 +806,11 @@ export default function InboxPage() {
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <StatusBadge status={detail.thread.status} />
+                  {detail.thread.category && (
+                    <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-xs text-slate-600">
+                      {detail.thread.category}
+                    </span>
+                  )}
                   {detail.thread.tags.map((tag) => (
                     <TagChip
                       key={tag.id}
@@ -702,9 +819,14 @@ export default function InboxPage() {
                       onRemove={() => removeTag(tag.id)}
                     />
                   ))}
-                  {detail.thread.replyTimeSeconds != null && (
-                    <span className="text-xs text-slate-500">
-                      First reply in {formatReplyTime(detail.thread.replyTimeSeconds)}
+                  {detail.thread.ageBusinessDays != null && (
+                    <span
+                      className={cn(
+                        "text-xs",
+                        detail.thread.overdue ? "font-medium text-rose-600" : "text-slate-500"
+                      )}
+                    >
+                      Age: {detail.thread.ageBusinessDays} business day(s)
                     </span>
                   )}
                 </div>
@@ -734,6 +856,25 @@ export default function InboxPage() {
                   </select>
                   <select
                     className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm"
+                    value={detail.thread.category || ""}
+                    onChange={async (e) => {
+                      if (!selectedId) return;
+                      await api(`/api/threads/${selectedId}`, {
+                        method: "PATCH",
+                        body: JSON.stringify({ category: e.target.value || null }),
+                      });
+                      onSync();
+                    }}
+                  >
+                    <option value="">No category</option>
+                    {CATEGORY_OPTIONS.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm"
                     defaultValue=""
                     onChange={(e) => {
                       if (e.target.value) addTag(e.target.value);
@@ -753,6 +894,13 @@ export default function InboxPage() {
               </div>
 
               <ScrollArea className="flex-1 p-4">
+                <div className="mb-3 rounded-lg border border-dashed border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-600">
+                  <p className="font-medium text-slate-800">Thread preview</p>
+                  <p className="mt-1">{detail.thread.snippet || "No snippet"}</p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Full bodies stay in Gmail. Use Open mail to read; update status/owner here.
+                  </p>
+                </div>
                 <div className="space-y-4">
                   {detail.messages.map((m) => (
                     <div
@@ -785,7 +933,15 @@ export default function InboxPage() {
                           <TagChip name={m.detectedSuffix} color="#0f766e" />
                         </div>
                       )}
-                      <EmailBody bodyHtml={m.bodyHtml} bodyText={m.bodyText} />
+                      {m.bodyText ? (
+                        <pre className="mt-2 whitespace-pre-wrap font-sans text-sm text-slate-800">
+                          {m.bodyText}
+                        </pre>
+                      ) : (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Metadata only — open in Gmail for full content
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>

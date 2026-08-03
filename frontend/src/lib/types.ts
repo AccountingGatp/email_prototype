@@ -14,11 +14,8 @@ export type Tag = {
   createdAt?: string;
 };
 
-export type ThreadStatus =
-  | "replied"
-  | "not_replied"
-  | "replied_by_other"
-  | "needs_followup";
+/** SOP status taxonomy */
+export type ThreadStatus = "to_respond" | "waiting" | "done";
 
 export type Thread = {
   id: string;
@@ -27,6 +24,9 @@ export type Thread = {
   snippet: string;
   participants: string[];
   status: ThreadStatus;
+  category: string | null;
+  isNoise: boolean;
+  closedAt: string | null;
   assignedTo: User | null;
   tags: Tag[];
   latestMessageAt: string;
@@ -36,11 +36,16 @@ export type Thread = {
   unread: boolean;
   lastReplier: User | null;
   unansweredHours: number | null;
+  ageBusinessDays: number | null;
+  ageBucket: "0-1" | "2-3" | "4+" | null;
+  gmailUrl: string | null;
+  overdue?: boolean;
 };
 
 export type Message = {
   id: string;
   threadId: string;
+  externalId?: string;
   fromEmail: string;
   fromName: string;
   toEmails: string[];
@@ -56,6 +61,10 @@ export type Overview = {
   totalToday: number;
   totalWeek: number;
   total: number;
+  open: number;
+  toRespond: number;
+  waiting: number;
+  done: number;
   replied: number;
   notReplied: number;
   repliedPercent: number;
@@ -71,12 +80,21 @@ export type Overview = {
     percent: number;
     replied: number;
     notReplied: number;
+    toRespond?: number;
+    waiting?: number;
+    open?: number;
     repliedPercent: number;
   }[];
   byStatus: Record<string, number>;
   oldestUnanswered: Thread | null;
   overdueCount: number;
+  overdue: number;
+  closedThisWeek: number;
+  unfiled: number;
+  noiseCount: number;
+  trend: { date: string; opened: number; closed: number }[];
   thresholdHours: number;
+  overdueBusinessDays: number;
 };
 
 export type LeaderboardEntry = {
@@ -87,8 +105,17 @@ export type LeaderboardEntry = {
 };
 
 export const STATUS_LABELS: Record<ThreadStatus, string> = {
-  replied: "Replied",
-  not_replied: "Not replied",
-  replied_by_other: "Replied by someone else",
-  needs_followup: "Needs follow-up",
+  to_respond: "To Respond",
+  waiting: "Waiting On Them",
+  done: "Done",
 };
+
+export const CATEGORY_OPTIONS = [
+  "Bills / AP",
+  "Payroll",
+  "Tax",
+  "Bank & Reconciliation",
+  "Client Query",
+  "Notification",
+  "Promotions",
+] as const;

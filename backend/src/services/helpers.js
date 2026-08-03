@@ -3,6 +3,8 @@
  * e.g. support+billing@company.com → "billing"
  */
 import { normalizeBodyText } from "./email-body.js";
+import { businessDaysBetween } from "./sla.js";
+import { normalizeStatus, ageBucketFromBusinessDays } from "./status.js";
 
 export function extractSuffix(toEmails = [], sharedInbox = "support@company.com") {
   const localBase = sharedInbox.split("@")[0].toLowerCase();
@@ -29,7 +31,7 @@ function iso(d) {
   return d instanceof Date ? d.toISOString() : new Date(d).toISOString();
 }
 
-export function mapThread(thread, tags = [], lastReplier = null, assignee = null) {
+export function mapThread(thread, tags = [], lastReplier = null, assignee = null, opts = {}) {
   const assigned =
     assignee ||
     (thread.assignedTo && typeof thread.assignedTo === "object"
@@ -37,6 +39,21 @@ export function mapThread(thread, tags = [], lastReplier = null, assignee = null
       : null);
 
   const snippet = normalizeBodyText(thread.snippet || "", "", "").slice(0, 160);
+  const status = normalizeStatus(thread.status) || thread.status;
+  const ageBusinessDays =
+    thread.firstIncomingAt && status === "to_respond"
+      ? businessDaysBetween(thread.firstIncomingAt, new Date())
+      : thread.firstIncomingAt
+        ? businessDaysBetween(thread.firstIncomingAt, new Date())
+        : null;
+  const ageBucketVal = ageBucketFromBusinessDays(ageBusinessDays);
+  const mailbox = opts.sharedInboxEmail || "";
+  const gmailUrl =
+    thread.externalId && !String(thread.externalId).startsWith("ext_")
+      ? mailbox
+        ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox)}#all/${thread.externalId}`
+        : `https://mail.google.com/mail/u/0/#all/${thread.externalId}`
+      : null;
 
   return {
     id: thread._id,
@@ -44,7 +61,10 @@ export function mapThread(thread, tags = [], lastReplier = null, assignee = null
     subject: thread.subject,
     snippet,
     participants: thread.participants || [],
-    status: thread.status,
+    status,
+    category: thread.category || null,
+    isNoise: !!thread.isNoise,
+    closedAt: iso(thread.closedAt),
     assignedTo: assigned
       ? { id: assigned._id || assigned.id, name: assigned.name, email: assigned.email }
       : null,
@@ -67,10 +87,17 @@ export function mapThread(thread, tags = [], lastReplier = null, assignee = null
           email: lastReplier.email,
         }
       : null,
+    ageBusinessDays,
+    ageBucket: ageBucketVal,
+    gmailUrl,
     unansweredHours:
-      thread.firstIncomingAt && thread.status === "not_replied"
+      thread.firstIncomingAt && status === "to_respond"
         ? hoursBetween(thread.firstIncomingAt, new Date())
         : null,
+    overdue:
+      status === "to_respond" &&
+      ageBusinessDays != null &&
+      ageBusinessDays > (opts.overdueBusinessDays ?? 2),
   };
 }
 
@@ -90,7 +117,7 @@ export function mapMessage(msg, replier = null) {
     toEmails: msg.toEmails || [],
     ccEmails: msg.ccEmails || [],
     bodyText,
-    bodyHtml: msg.bodyHtml,
+    bodyHtml: msg.bodyHtml || "",
     sentAt: iso(msg.sentAt),
     isIncoming: !!msg.isIncoming,
     repliedBy: repliedBy

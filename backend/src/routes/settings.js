@@ -43,6 +43,7 @@ router.patch("/settings", async (req, res) => {
   try {
     const updates = req.body || {};
     const allowed = [
+      "overdue_business_days",
       "unanswered_threshold_hours",
       "shared_inbox_email",
       "notify_unanswered",

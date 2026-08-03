@@ -15,6 +15,7 @@ import {
   Globe2,
 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
+import { useMailboxSyncOnOpen, resetMailboxSyncSession } from "@/hooks/use-mailbox-sync";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -33,6 +34,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout, loading } = useAuth();
+
+  useMailboxSyncOnOpen(!!user && !loading);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -102,6 +105,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             size="icon-sm"
             className="text-slate-400 hover:bg-white/10 hover:text-white"
             onClick={() => {
+              resetMailboxSyncSession();
               logout();
               router.push("/login");
             }}
@@ -118,8 +122,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="flex items-center gap-2 text-slate-500">
             <Bell className="h-4 w-4" />
-            <span className="text-xs">Live sync on</span>
-            <span className="h-2 w-2 animate-pulse rounded-full bg-teal-500" />
+            <span className="text-xs">Sync on open · manual Sync now</span>
           </div>
         </header>
         <main className="flex-1 p-6">{children}</main>

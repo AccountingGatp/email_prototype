@@ -5,19 +5,19 @@ import { STATUS_LABELS, type ThreadStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const STYLES: Record<ThreadStatus, string> = {
-  replied: "bg-emerald-50 text-emerald-800 border-emerald-200",
-  not_replied: "bg-rose-50 text-rose-800 border-rose-200",
-  replied_by_other: "bg-amber-50 text-amber-900 border-amber-200",
-  needs_followup: "bg-orange-50 text-orange-900 border-orange-200",
+  to_respond: "bg-rose-50 text-rose-800 border-rose-200",
+  waiting: "bg-amber-50 text-amber-900 border-amber-200",
+  done: "bg-emerald-50 text-emerald-800 border-emerald-200",
 };
 
 export function StatusBadge({ status }: { status: ThreadStatus }) {
+  const key = (STATUS_LABELS[status] ? status : "to_respond") as ThreadStatus;
   return (
     <Badge
       variant="outline"
-      className={cn("font-medium", STYLES[status] || "bg-slate-50 text-slate-700")}
+      className={cn("font-medium", STYLES[key] || "bg-slate-50 text-slate-700")}
     >
-      {STATUS_LABELS[status] || status}
+      {STATUS_LABELS[key] || status}
     </Badge>
   );
 }

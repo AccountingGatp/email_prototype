@@ -6,25 +6,12 @@
 import { google } from "googleapis";
 import { nanoid } from "nanoid";
 import { getSetting, setSetting } from "../db/models.js";
-import { htmlToPlainText, normalizeBodyText } from "../services/email-body.js";
-
-function decodeBody(data) {
-  if (!data) return "";
-  const normalized = data.replace(/-/g, "+").replace(/_/g, "/");
-  return Buffer.from(normalized, "base64").toString("utf8");
-}
-
-function walkParts(payload, out = { text: "", html: "" }) {
-  if (!payload) return out;
-  const mime = payload.mimeType || "";
-  if (payload.body?.data) {
-    const decoded = decodeBody(payload.body.data);
-    if (mime === "text/plain" && !out.text) out.text = decoded;
-    if (mime === "text/html" && !out.html) out.html = decoded;
-  }
-  for (const part of payload.parts || []) walkParts(part, out);
-  return out;
-}
+import {
+  STATUS_GMAIL_LABELS,
+  NOISE_LABELS,
+  detectCategory,
+  detectNoise,
+} from "../services/status.js";
 
 function headerMap(headers = []) {
   const map = {};
@@ -89,12 +76,22 @@ export class DemoProvider {
         fromEmail: client.email,
         fromName: client.name,
         toEmails: [`support+${suffix}@company.com`],
-        bodyText: `Hi support team,\n\n${subject}. Could someone take a look when you have a moment?\n\nThanks,\n${client.name}`,
-        bodyHtml: `<p>Hi support team,</p><p>${subject}. Could someone take a look when you have a moment?</p><p>Thanks,<br/>${client.name}</p>`,
+        snippet: `${subject}. Could someone take a look when you have a moment?`,
+        bodyText: "",
+        bodyHtml: "",
         sentAt: new Date().toISOString(),
         detectedSuffix: suffix,
+        labelNames: ["To Respond"],
+        labelIds: [],
+        category: "Client Query",
+        isNoise: false,
+        persistBody: false,
       },
     ];
+  }
+
+  async applyStatusLabel() {
+    /* no-op for demo */
   }
 }
 
@@ -102,6 +99,8 @@ export class GmailProvider {
   constructor(config = {}) {
     this.name = "gmail";
     this.config = config;
+    this._labelCache = null;
+    this._statusLabelIds = null;
   }
 
   getClient() {
@@ -113,19 +112,69 @@ export class GmailProvider {
     return google.gmail({ version: "v1", auth: oauth2 });
   }
 
-  mapMessage(msg) {
+  async listLabels(gmail) {
+    if (this._labelCache) return this._labelCache;
+    const res = await gmail.users.labels.list({ userId: "me" });
+    this._labelCache = res.data.labels || [];
+    return this._labelCache;
+  }
+
+  async ensureLabel(gmail, name) {
+    const labels = await this.listLabels(gmail);
+    const existing = labels.find(
+      (l) => (l.name || "").toLowerCase() === name.toLowerCase()
+    );
+    if (existing) return existing;
+
+    try {
+      const created = await gmail.users.labels.create({
+        userId: "me",
+        requestBody: {
+          name,
+          labelListVisibility: "labelShow",
+          messageListVisibility: "show",
+        },
+      });
+      this._labelCache = null;
+      return created.data;
+    } catch (err) {
+      console.warn(`[gmail] could not create label "${name}":`, err.message);
+      return null;
+    }
+  }
+
+  async ensureStatusLabels(gmail) {
+    if (this._statusLabelIds) return this._statusLabelIds;
+    const ids = {};
+    for (const [status, name] of Object.entries(STATUS_GMAIL_LABELS)) {
+      const label = await this.ensureLabel(gmail, name);
+      if (label?.id) ids[status] = label.id;
+    }
+    for (const name of NOISE_LABELS) {
+      await this.ensureLabel(gmail, name);
+    }
+    this._statusLabelIds = ids;
+    return ids;
+  }
+
+  resolveLabelNames(labelIds, allLabels) {
+    const byId = Object.fromEntries((allLabels || []).map((l) => [l.id, l.name]));
+    return (labelIds || []).map((id) => byId[id] || id).filter(Boolean);
+  }
+
+  mapMessage(msg, allLabels = []) {
     const headers = headerMap(msg.payload?.headers || []);
     const from = parseFrom(headers.from || "");
     const toEmails = parseAddressList(headers.to || "");
     const ccEmails = parseAddressList(headers.cc || "");
-    const bodies = walkParts(msg.payload);
-    const fromHtml = bodies.html ? htmlToPlainText(bodies.html) : "";
-    // Prefer real text/plain when it isn't empty CSS noise; else HTML→text; else Gmail snippet
-    const bodyText = normalizeBodyText(
-      bodies.text || "",
-      bodies.html || "",
-      msg.snippet || fromHtml || ""
-    );
+    const labelIds = msg.labelIds || [];
+    const labelNames = this.resolveLabelNames(labelIds, allLabels);
+    const category = detectCategory(labelNames);
+    const isNoise = detectNoise({
+      labelNames,
+      fromEmail: from.email,
+      subject: headers.subject || "",
+    });
 
     const internalDate = msg.internalDate
       ? new Date(Number(msg.internalDate)).toISOString()
@@ -139,10 +188,46 @@ export class GmailProvider {
       fromName: from.name,
       toEmails,
       ccEmails,
-      bodyText,
-      bodyHtml: bodies.html || `<p>${bodyText.replace(/\n/g, "<br/>")}</p>`,
+      snippet: (msg.snippet || "").slice(0, 200),
+      // SOP T5 — metadata only; do not persist bodies
+      bodyText: "",
+      bodyHtml: "",
+      persistBody: false,
       sentAt: internalDate,
+      labelIds,
+      labelNames,
+      category,
+      isNoise,
     };
+  }
+
+  async applyStatusLabel(threadExternalId, status) {
+    if (!this.config.clientId || !this.config.refreshToken) return;
+    const gmail = this.getClient();
+    const statusIds = await this.ensureStatusLabels(gmail);
+    const addId = statusIds[status];
+    if (!addId) {
+      console.warn(`[gmail] missing label id for status ${status}`);
+      return;
+    }
+    const removeIds = Object.entries(statusIds)
+      .filter(([s]) => s !== status)
+      .map(([, id]) => id)
+      .filter(Boolean);
+
+    try {
+      await gmail.users.threads.modify({
+        userId: "me",
+        id: threadExternalId,
+        requestBody: {
+          addLabelIds: [addId],
+          removeLabelIds: removeIds,
+        },
+      });
+    } catch (err) {
+      console.warn("[gmail] threads.modify failed (need gmail.modify scope?):", err.message);
+      throw err;
+    }
   }
 
   async ensureMailboxCursor(gmail) {
@@ -210,17 +295,26 @@ export class GmailProvider {
     }
 
     const gmail = this.getClient();
+    try {
+      await this.ensureStatusLabels(gmail);
+    } catch (err) {
+      console.warn("[gmail] ensureStatusLabels:", err.message);
+    }
+
+    const allLabels = await this.listLabels(gmail);
     const messageIds = await this.fetchMessageIds(gmail);
     const mapped = [];
 
     for (const id of messageIds) {
       try {
+        // metadata is enough for SOP T5; headers + labels + snippet
         const res = await gmail.users.messages.get({
           userId: "me",
           id,
-          format: "full",
+          format: "metadata",
+          metadataHeaders: ["From", "To", "Cc", "Subject", "Date"],
         });
-        mapped.push(this.mapMessage(res.data));
+        mapped.push(this.mapMessage(res.data, allLabels));
       } catch (err) {
         console.warn(`[gmail] failed to fetch message ${id}:`, err.message);
       }
@@ -247,6 +341,10 @@ export class GraphProvider {
       return [];
     }
     throw new Error("Microsoft Graph provider not configured with live credentials yet.");
+  }
+
+  async applyStatusLabel() {
+    /* no-op */
   }
 }
 

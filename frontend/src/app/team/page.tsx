@@ -8,7 +8,6 @@ import { PageLoader, Spinner } from "@/components/loader";
 import { api } from "@/lib/api";
 import { formatReplyTime, relativeTime, senderFromParticipants } from "@/lib/format";
 import type { LeaderboardEntry, Thread } from "@/lib/types";
-import { useRealtime } from "@/hooks/use-realtime";
 import { cn } from "@/lib/utils";
 
 export default function TeamPage() {
@@ -35,7 +34,6 @@ export default function TeamPage() {
   useEffect(() => {
     load();
   }, [load]);
-  useRealtime(load);
 
   return (
     <AppShell>

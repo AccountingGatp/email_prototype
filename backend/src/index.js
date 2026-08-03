@@ -12,8 +12,6 @@ import threadRoutes from "./routes/threads.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import settingsRoutes from "./routes/settings.js";
 import domainFilterRoutes from "./routes/domain-filters.js";
-import { createProvider } from "./providers/index.js";
-import { upsertIncomingMessage, checkUnansweredAlerts } from "./services/threads.js";
 
 const isVercel = !!process.env.VERCEL;
 
@@ -42,7 +40,7 @@ async function buildApp() {
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api", settingsRoutes);
 
-  // Socket.IO + background sync only for long-running local/server hosts
+  // Local long-running host only: HTTP + optional Socket.IO (no background Gmail sync)
   if (!isVercel) {
     const server = http.createServer(app);
     const io = new Server(server, {
@@ -53,26 +51,6 @@ async function buildApp() {
     io.on("connection", (socket) => {
       socket.emit("connected", { ok: true });
     });
-
-    async function backgroundSync() {
-      try {
-        const providerName = (await getSetting("provider")) || "demo";
-        const provider = createProvider(providerName);
-        const messages = await provider.fetchNewMessages();
-        const threadIds = [];
-        for (const msg of messages) {
-          const id = await upsertIncomingMessage(msg);
-          if (id) threadIds.push(id);
-        }
-        if (threadIds.length) io.emit("inbox:sync", { threadIds });
-        await checkUnansweredAlerts(io);
-      } catch (err) {
-        console.error("Sync error:", err.message);
-      }
-    }
-
-    setInterval(backgroundSync, 45_000);
-    setTimeout(backgroundSync, 8_000);
 
     const PORT = process.env.PORT || 4000;
     server.listen(PORT, () => {

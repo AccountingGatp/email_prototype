@@ -1,6 +1,6 @@
 const API_URL = 
-"https://email-prototype-api.vercel.app"
-// process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+// "https://email-prototype-api.vercel.app"
+process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;

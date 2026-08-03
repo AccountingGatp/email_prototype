@@ -9,6 +9,15 @@ import {
 } from "../db/models.js";
 import { extractSuffix } from "./helpers.js";
 import { normalizeBodyText } from "./email-body.js";
+import {
+  resolveStatusFromLabels,
+  detectCategory,
+  detectNoise,
+  normalizeStatus,
+  STATUSES,
+} from "./status.js";
+import { businessDaysAgo } from "./sla.js";
+import { createProvider } from "../providers/index.js";
 
 async function findTeamMemberByEmail(email) {
   if (!email) return null;
@@ -33,7 +42,7 @@ async function ensureTag(suffix, createdBy = null) {
   return tag;
 }
 
-export async function recomputeThreadStatus(threadId) {
+export async function recomputeThreadStatus(threadId, labelHints = null) {
   const thread = await Thread.findById(threadId);
   if (!thread) return;
 
@@ -51,20 +60,8 @@ export async function recomputeThreadStatus(threadId) {
     .lean();
   const latest = await Message.findOne({ threadId }).sort({ sentAt: -1 }).lean();
 
-  let status = "not_replied";
-  if (!lastOut) {
-    status = "not_replied";
-  } else if (lastIn && new Date(lastIn.sentAt) > new Date(lastOut.sentAt)) {
-    status = "needs_followup";
-  } else if (
-    thread.assignedTo &&
-    lastOut.repliedBy &&
-    lastOut.repliedBy !== thread.assignedTo
-  ) {
-    status = "replied_by_other";
-  } else {
-    status = "replied";
-  }
+  const labelNames = labelHints?.labelNames ?? thread.gmailLabelNames ?? [];
+  const status = resolveStatusFromLabels(labelNames, { lastIn, lastOut });
 
   let replySeconds = thread.replyTimeSeconds;
   if (firstIn && firstOut && !replySeconds) {
@@ -73,12 +70,30 @@ export async function recomputeThreadStatus(threadId) {
     );
   }
 
+  const prev = thread.status;
   thread.status = status;
+  if (status === "done" && prev !== "done") {
+    thread.closedAt = thread.closedAt || new Date();
+  }
+  if (status !== "done") {
+    thread.closedAt = null;
+  }
+
   if (firstIn?.sentAt && !thread.firstIncomingAt) thread.firstIncomingAt = firstIn.sentAt;
   if (firstOut?.sentAt && !thread.firstReplyAt) thread.firstReplyAt = firstOut.sentAt;
   thread.replyTimeSeconds = replySeconds;
   thread.latestMessageAt = latest?.sentAt || thread.latestMessageAt;
-  thread.snippet = normalizeBodyText(latest?.bodyText || "", latest?.bodyHtml || "", "").slice(0, 120) || thread.snippet;
+
+  const snippetSource =
+    latest?.bodyText ||
+    thread.snippet ||
+    "";
+  thread.snippet =
+    normalizeBodyText(snippetSource, latest?.bodyHtml || "", thread.snippet || "").slice(
+      0,
+      160
+    ) || thread.snippet;
+
   await thread.save();
   return status;
 }
@@ -89,6 +104,19 @@ export async function upsertIncomingMessage(payload) {
   const toEmails = payload.toEmails || [];
   const suffix =
     extractSuffix(toEmails, sharedInbox) || payload.detectedSuffix || null;
+
+  const labelNames = payload.labelNames || [];
+  const labelIds = payload.labelIds || [];
+  const category =
+    payload.category || detectCategory(labelNames) || null;
+  const isNoise =
+    payload.isNoise != null
+      ? !!payload.isNoise
+      : detectNoise({
+          labelNames,
+          fromEmail: payload.fromEmail,
+          subject: payload.subject,
+        });
 
   let thread = payload.threadExternalId
     ? await Thread.findOne({ externalId: payload.threadExternalId })
@@ -101,18 +129,35 @@ export async function upsertIncomingMessage(payload) {
     thread = await Thread.findOne({ subject }).sort({ latestMessageAt: -1 });
   }
 
+  const snippet =
+    (payload.snippet || "").slice(0, 160) ||
+    normalizeBodyText(payload.bodyText || "", payload.bodyHtml || "", "").slice(0, 160);
+
   if (!thread) {
     thread = await Thread.create({
       _id: nanoid(),
       externalId: payload.threadExternalId || `ext_${nanoid(8)}`,
       subject: payload.subject,
-      snippet: normalizeBodyText(payload.bodyText || "", payload.bodyHtml || "", "").slice(0, 120),
+      snippet,
       participants: [payload.fromEmail, sharedInbox].filter(Boolean),
-      status: "not_replied",
+      status: "to_respond",
+      category,
+      isNoise,
+      gmailLabelIds: labelIds,
+      gmailLabelNames: labelNames,
       latestMessageAt: payload.sentAt || new Date(),
       firstIncomingAt: payload.sentAt || new Date(),
       unread: true,
     });
+  } else {
+    if (labelNames.length) {
+      thread.gmailLabelNames = labelNames;
+      thread.gmailLabelIds = labelIds;
+    }
+    if (category) thread.category = category;
+    thread.isNoise = isNoise;
+    if (snippet) thread.snippet = snippet;
+    await thread.save();
   }
 
   if (suffix) {
@@ -125,12 +170,18 @@ export async function upsertIncomingMessage(payload) {
 
   if (payload.externalId) {
     const existing = await Message.findOne({ externalId: payload.externalId }).lean();
-    if (existing) return thread._id;
+    if (existing) {
+      await recomputeThreadStatus(thread._id, { labelNames });
+      return thread._id;
+    }
   }
 
   const teamMember = await findTeamMemberByEmail(payload.fromEmail);
   const isIncoming = !teamMember;
 
+  // SOP T5: do not persist full email bodies from sync — metadata + snippet only.
+  // Portal-authored replies still store short body text (handled in reply route).
+  const storeBodies = payload.persistBody === true;
   await Message.create({
     _id: nanoid(),
     threadId: thread._id,
@@ -139,8 +190,8 @@ export async function upsertIncomingMessage(payload) {
     fromName: payload.fromName || payload.fromEmail,
     toEmails,
     ccEmails: payload.ccEmails || [],
-    bodyText: payload.bodyText || "",
-    bodyHtml: payload.bodyHtml || "",
+    bodyText: storeBodies ? payload.bodyText || "" : "",
+    bodyHtml: storeBodies ? payload.bodyHtml || "" : "",
     sentAt: payload.sentAt || new Date(),
     isIncoming,
     repliedBy: teamMember?._id || null,
@@ -154,18 +205,50 @@ export async function upsertIncomingMessage(payload) {
   thread.unread = true;
   await thread.save();
 
-  await recomputeThreadStatus(thread._id);
+  await recomputeThreadStatus(thread._id, { labelNames });
   return thread._id;
 }
 
+export async function setThreadStatus(threadId, status, { writeGmail = true } = {}) {
+  const normalized = normalizeStatus(status);
+  if (!STATUSES.includes(normalized)) throw new Error("Invalid status");
+
+  const thread = await Thread.findById(threadId);
+  if (!thread) throw new Error("Thread not found");
+
+  const prev = thread.status;
+  thread.status = normalized;
+  if (normalized === "done") {
+    thread.closedAt = thread.closedAt || new Date();
+  } else {
+    thread.closedAt = null;
+  }
+  await thread.save();
+
+  if (writeGmail && thread.externalId && !String(thread.externalId).startsWith("ext_")) {
+    try {
+      const providerName = (await getSetting("provider")) || "demo";
+      const provider = createProvider(providerName);
+      if (typeof provider.applyStatusLabel === "function") {
+        await provider.applyStatusLabel(thread.externalId, normalized);
+      }
+    } catch (err) {
+      console.warn("[status] Gmail label write-back failed:", err.message);
+    }
+  }
+
+  return { prev, status: normalized };
+}
+
 export async function checkUnansweredAlerts(io) {
-  const hours = Number((await getSetting("unanswered_threshold_hours")) || 4);
+  const days = Number((await getSetting("overdue_business_days")) || 2);
   const notify = (await getSetting("notify_unanswered")) !== "false";
   if (!notify) return [];
 
-  const cutoff = new Date(Date.now() - hours * 3600 * 1000);
+  const cutoff = businessDaysAgo(days);
   const unanswered = await Thread.find({
-    status: "not_replied",
+    status: "to_respond",
+    isNoise: { $ne: true },
     firstIncomingAt: { $ne: null, $lte: cutoff },
   })
     .sort({ firstIncomingAt: 1 })
@@ -182,8 +265,8 @@ export async function checkUnansweredAlerts(io) {
     }).lean();
     if (exists) continue;
 
-    const title = `Unanswered for ${hours}+ hours`;
-    const body = `"${t.subject}" has had no reply since ${t.firstIncomingAt}`;
+    const title = `Overdue: ${days}+ business days`;
+    const body = `"${t.subject}" still needs a response (To Respond)`;
     const n = await Notification.create({
       _id: nanoid(),
       type: "unanswered",
@@ -217,7 +300,7 @@ export async function enrichThreads(threads) {
     if (t.assignedTo) assigneeIds.add(t.assignedTo);
   }
 
-  const [tags, users, lastMsgs] = await Promise.all([
+  const [tags, users, lastMsgs, sharedInbox, overdueDays] = await Promise.all([
     Tag.find({ _id: { $in: [...tagIdSet] } }).lean(),
     User.find({ _id: { $in: [...assigneeIds] } })
       .select("_id name email")
@@ -228,6 +311,8 @@ export async function enrichThreads(threads) {
     })
       .sort({ sentAt: -1 })
       .lean(),
+    getSetting("shared_inbox_email"),
+    getSetting("overdue_business_days", "2"),
   ]);
 
   const tagMap = Object.fromEntries(tags.map((t) => [t._id, t]));
@@ -247,11 +332,15 @@ export async function enrichThreads(threads) {
   const replierMap = Object.fromEntries(repliers.map((u) => [u._id, u]));
 
   const { mapThread } = await import("./helpers.js");
+  const opts = {
+    sharedInboxEmail: sharedInbox || "",
+    overdueBusinessDays: Number(overdueDays) || 2,
+  };
   return list.map((t) => {
     const threadTags = (t.tagIds || []).map((id) => tagMap[id]).filter(Boolean);
     const last = lastByThread[t._id];
     const lastReplier = last?.repliedBy ? replierMap[last.repliedBy] : null;
     const assignee = t.assignedTo ? userMap[t.assignedTo] : null;
-    return mapThread(t, threadTags, lastReplier, assignee);
+    return mapThread(t, threadTags, lastReplier, assignee, opts);
   });
 }
