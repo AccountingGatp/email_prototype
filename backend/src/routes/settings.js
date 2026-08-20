@@ -33,7 +33,10 @@ router.use(authRequired);
 
 router.get("/settings", async (_req, res) => {
   try {
-    res.json({ settings: await getAllSettings() });
+    const settings = await getAllSettings();
+    // Never expose secrets to the browser
+    delete settings.gmail_refresh_token;
+    res.json({ settings });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -52,7 +55,9 @@ router.patch("/settings", async (req, res) => {
     for (const key of allowed) {
       if (updates[key] !== undefined) await setSetting(key, updates[key]);
     }
-    res.json({ settings: await getAllSettings() });
+    const settings = await getAllSettings();
+    delete settings.gmail_refresh_token;
+    res.json({ settings });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -90,7 +95,7 @@ router.post("/notifications/read-all", async (_req, res) => {
 router.post("/sync", async (req, res) => {
   try {
     const providerName = (await getSetting("provider")) || "demo";
-    const provider = createProvider(providerName);
+    const provider = await createProvider(providerName);
     const messages = await provider.fetchNewMessages();
     const threadIds = [];
     for (const msg of messages) {
@@ -102,7 +107,9 @@ router.post("/sync", async (req, res) => {
     if (threadIds.length && io) io.emit("inbox:sync", { threadIds });
     res.json({ synced: messages.length, threadIds, alerts: alerts.length });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const code = err.code || undefined;
+    const status = code === "GMAIL_REAUTH_REQUIRED" ? 401 : 500;
+    res.status(status).json({ error: err.message, code });
   }
 });
 

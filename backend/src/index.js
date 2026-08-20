@@ -12,6 +12,8 @@ import threadRoutes from "./routes/threads.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import settingsRoutes from "./routes/settings.js";
 import domainFilterRoutes from "./routes/domain-filters.js";
+import gmailRoutes from "./routes/gmail.js";
+import { getGmailRefreshToken } from "./services/gmail-auth.js";
 
 const isVercel = !!process.env.VERCEL;
 
@@ -26,6 +28,8 @@ async function buildApp() {
   if (process.env.SHARED_MAILBOX_EMAIL) {
     await setSetting("shared_inbox_email", process.env.SHARED_MAILBOX_EMAIL);
   }
+  // Migrate env refresh token into MongoDB once (if DB empty)
+  await getGmailRefreshToken();
 
   const app = express();
   app.use(cors({ origin: true, credentials: true }));
@@ -38,6 +42,7 @@ async function buildApp() {
   app.use("/api/domain-filters", domainFilterRoutes);
   app.use("/api/threads", threadRoutes);
   app.use("/api/dashboard", dashboardRoutes);
+  app.use("/api/gmail", gmailRoutes);
   app.use("/api", settingsRoutes);
 
   // Local long-running host only: HTTP + optional Socket.IO (no background Gmail sync)

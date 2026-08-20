@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "seed": "node src/db/seed.js"
+    "seed": "node src/db/seed.js",
+    "gmail-token": "node scripts/get-gmail-refresh-token.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

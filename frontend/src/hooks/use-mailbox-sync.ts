@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { GMAIL_REAUTH_CODE } from "@/lib/gmail-connect";
 
 const SESSION_KEY = "et_mailbox_synced";
 export const MAILBOX_SYNCED_EVENT = "et:mailbox-synced";
+export const MAILBOX_REAUTH_EVENT = "et:mailbox-reauth";
 
 /**
  * Pull mailbox once when the app is opened (per browser tab session).
+ * If Gmail token expired, emit MAILBOX_REAUTH_EVENT (popup needs a click — Sync now).
  * Manual Sync now still available on the inbox page.
  */
 export function useMailboxSyncOnOpen(enabled: boolean) {
@@ -17,7 +20,6 @@ export function useMailboxSyncOnOpen(enabled: boolean) {
     if (!enabled || ran.current) return;
     if (typeof window === "undefined") return;
 
-    // Once per tab session — navigating between pages won't re-sync
     if (sessionStorage.getItem(SESSION_KEY) === "1") {
       ran.current = true;
       return;
@@ -32,8 +34,10 @@ export function useMailboxSyncOnOpen(enabled: boolean) {
       })
       .catch((err) => {
         console.warn("[sync on open]", err instanceof Error ? err.message : err);
-        // Allow retry on next full page load if this attempt failed
         sessionStorage.removeItem(SESSION_KEY);
+        if (err instanceof ApiError && err.code === GMAIL_REAUTH_CODE) {
+          window.dispatchEvent(new Event(MAILBOX_REAUTH_EVENT));
+        }
       });
   }, [enabled]);
 }

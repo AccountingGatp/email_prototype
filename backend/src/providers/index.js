@@ -12,6 +12,12 @@ import {
   detectCategory,
   detectNoise,
 } from "../services/status.js";
+import {
+  getGmailRefreshToken,
+  clearGmailRefreshToken,
+  isGmailAuthError,
+  makeGmailReauthError,
+} from "../services/gmail-auth.js";
 
 function headerMap(headers = []) {
   const map = {};
@@ -202,7 +208,9 @@ export class GmailProvider {
   }
 
   async applyStatusLabel(threadExternalId, status) {
-    if (!this.config.clientId || !this.config.refreshToken) return;
+    const refreshToken = this.config.refreshToken || (await getGmailRefreshToken());
+    if (!this.config.clientId || !refreshToken) return;
+    this.config.refreshToken = refreshToken;
     const gmail = this.getClient();
     const statusIds = await this.ensureStatusLabels(gmail);
     const addId = statusIds[status];
@@ -288,21 +296,39 @@ export class GmailProvider {
     return (res.data.messages || []).map((m) => m.id).filter(Boolean);
   }
 
-  async fetchNewMessages() {
-    if (!this.config.clientId || !this.config.clientSecret || !this.config.refreshToken) {
-      console.warn("[gmail] Missing GMAIL_CLIENT_ID / SECRET / REFRESH_TOKEN — skipping sync.");
-      return [];
+  async gmailAuthError(err) {
+    if (isGmailAuthError(err)) {
+      await clearGmailRefreshToken();
+      return makeGmailReauthError(err);
     }
+    return err instanceof Error ? err : new Error(err?.message || String(err));
+  }
+
+  async fetchNewMessages() {
+    const refreshToken = this.config.refreshToken || (await getGmailRefreshToken());
+    if (!this.config.clientId || !this.config.clientSecret || !refreshToken) {
+      throw makeGmailReauthError(
+        new Error("Missing Gmail credentials — reconnect Google from Sync")
+      );
+    }
+    this.config.refreshToken = refreshToken;
 
     const gmail = this.getClient();
     try {
       await this.ensureStatusLabels(gmail);
     } catch (err) {
       console.warn("[gmail] ensureStatusLabels:", err.message);
+      if (isGmailAuthError(err)) throw await this.gmailAuthError(err);
     }
 
-    const allLabels = await this.listLabels(gmail);
-    const messageIds = await this.fetchMessageIds(gmail);
+    let allLabels;
+    let messageIds;
+    try {
+      allLabels = await this.listLabels(gmail);
+      messageIds = await this.fetchMessageIds(gmail);
+    } catch (err) {
+      throw await this.gmailAuthError(err);
+    }
     const mapped = [];
 
     for (const id of messageIds) {
@@ -348,15 +374,17 @@ export class GraphProvider {
   }
 }
 
-export function createProvider(name = "demo") {
+export async function createProvider(name = "demo") {
   switch (name) {
-    case "gmail":
+    case "gmail": {
+      const refreshToken = await getGmailRefreshToken();
       return new GmailProvider({
         clientId: process.env.GMAIL_CLIENT_ID,
         clientSecret: process.env.GMAIL_CLIENT_SECRET,
-        refreshToken: process.env.GMAIL_REFRESH_TOKEN,
+        refreshToken,
         initialSyncLimit: process.env.GMAIL_INITIAL_SYNC_LIMIT || 40,
       });
+    }
     case "graph":
     case "outlook":
       return new GraphProvider({

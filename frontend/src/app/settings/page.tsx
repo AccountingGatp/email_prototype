@@ -121,16 +121,19 @@ export default function SettingsPage() {
             <option value="graph">Microsoft Graph</option>
           </select>
           <p className="text-xs text-slate-500">
-            For Gmail, set credentials in the backend <code>.env</code>. Status write-back
-            needs OAuth scope <code>https://www.googleapis.com/auth/gmail.modify</code>{" "}
-            (in addition to readonly). Labels used: <strong>To Respond</strong>,{" "}
+            Keep <code>GMAIL_CLIENT_ID</code> / <code>GMAIL_CLIENT_SECRET</code> in
+            backend <code>.env</code>. The refresh token is stored in MongoDB. If it
+            expires, any signed-in user can reconnect via <strong>Sync now</strong>{" "}
+            (Google popup). Status write-back needs{" "}
+            <code>gmail.modify</code>. Labels: <strong>To Respond</strong>,{" "}
             <strong>Waiting On Them</strong>, <strong>Done</strong>.
           </p>
         </div>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           Mailbox sync runs when someone opens the app (once per tab session), or via{" "}
-          <strong>Sync now</strong> in the inbox. There is no background polling.
+          <strong>Sync now</strong> in the inbox. There is no background polling. Sign
+          into Google as the shared mailbox owner when reconnecting.
         </div>
 
         <Button type="submit" className="bg-teal-700 hover:bg-teal-800" disabled={saving}>

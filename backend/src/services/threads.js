@@ -228,7 +228,7 @@ export async function setThreadStatus(threadId, status, { writeGmail = true } = 
   if (writeGmail && thread.externalId && !String(thread.externalId).startsWith("ext_")) {
     try {
       const providerName = (await getSetting("provider")) || "demo";
-      const provider = createProvider(providerName);
+      const provider = await createProvider(providerName);
       if (typeof provider.applyStatusLabel === "function") {
         await provider.applyStatusLabel(thread.externalId, normalized);
       }

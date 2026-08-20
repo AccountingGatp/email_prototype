@@ -17,6 +17,8 @@ import {
 import type { Message, Tag, Thread, ThreadStatus, User } from "@/lib/types";
 import { CATEGORY_OPTIONS, STATUS_LABELS } from "@/lib/types";
 import { useAuth } from "@/components/auth-provider";
+import { syncMailboxWithReauth } from "@/lib/gmail-connect";
+import { MAILBOX_REAUTH_EVENT } from "@/hooks/use-mailbox-sync";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -252,11 +254,30 @@ export default function InboxPage() {
     return () => window.removeEventListener("et:mailbox-synced", handler);
   }, [onSync]);
 
+  useEffect(() => {
+    const handler = () => {
+      toast.message("Gmail access expired", {
+        description: "Click Sync now and approve Google access to reconnect.",
+        duration: 8000,
+      });
+    };
+    window.addEventListener(MAILBOX_REAUTH_EVENT, handler);
+    return () => window.removeEventListener(MAILBOX_REAUTH_EVENT, handler);
+  }, []);
+
   async function syncNow() {
     setSyncing(true);
     try {
-      const r = await api<{ synced: number }>("/api/sync", { method: "POST" });
-      toast.success(r.synced ? `Synced ${r.synced} new message(s)` : "Inbox up to date");
+      const r = await syncMailboxWithReauth({ allowPopup: true });
+      if (r.reconnected) {
+        toast.success(
+          r.synced
+            ? `Gmail reconnected · synced ${r.synced} message(s)`
+            : "Gmail reconnected · inbox up to date"
+        );
+      } else {
+        toast.success(r.synced ? `Synced ${r.synced} new message(s)` : "Inbox up to date");
+      }
       onSync();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Sync failed");
