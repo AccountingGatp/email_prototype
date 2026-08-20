@@ -257,6 +257,22 @@ export class GmailProvider {
     const historyId = await getSetting("gmail_history_id");
     const initialDone = (await getSetting("gmail_initial_sync_done")) === "true";
     const ids = new Set();
+    const limit = Number(this.config.initialSyncLimit || 40);
+
+    // Always pull recent inbox mail so Sync now surfaces the latest threads
+    // (history alone can return 0 while the DB still only has older mail).
+    try {
+      const recent = await gmail.users.messages.list({
+        userId: "me",
+        labelIds: ["INBOX"],
+        maxResults: Math.min(Math.max(limit, 50), 100),
+      });
+      for (const m of recent.data.messages || []) {
+        if (m.id) ids.add(m.id);
+      }
+    } catch (err) {
+      console.warn("[gmail] recent messages.list failed:", err.message);
+    }
 
     if (historyId && initialDone) {
       try {
@@ -276,24 +292,26 @@ export class GmailProvider {
           if (res.data.historyId) await setSetting("gmail_history_id", res.data.historyId);
           pageToken = res.data.nextPageToken;
         } while (pageToken);
-        return [...ids];
       } catch (err) {
-        console.warn("[gmail] history.list failed, falling back to messages.list:", err.message);
+        console.warn("[gmail] history.list failed, using recent list only:", err.message);
         await setSetting("gmail_initial_sync_done", "false");
       }
+    } else if (!initialDone) {
+      // First sync / reset: also list without INBOX-only in case mail is archived
+      const res = await gmail.users.messages.list({
+        userId: "me",
+        maxResults: limit,
+      });
+      for (const m of res.data.messages || []) {
+        if (m.id) ids.add(m.id);
+      }
     }
-
-    const limit = Number(this.config.initialSyncLimit || 40);
-    const res = await gmail.users.messages.list({
-      userId: "me",
-      maxResults: limit,
-    });
 
     if (profile.data.historyId) {
       await setSetting("gmail_history_id", profile.data.historyId);
     }
 
-    return (res.data.messages || []).map((m) => m.id).filter(Boolean);
+    return [...ids];
   }
 
   async gmailAuthError(err) {
