@@ -146,7 +146,7 @@ export default function InboxPage() {
       p.set("noise", searchParams.get("noise") === "true" ? "true" : "include");
     }
     if (filters.scopeAll || user?.role === "admin") p.set("scope", "all");
-    p.set("sort", "oldest_unanswered");
+    p.set("sort", "latest");
     return p.toString();
   }, [filters, user?.role, searchParams]);
 
